@@ -1,0 +1,14 @@
+[package]
+name = "reed-cpu"
+version = "0.1.0"
+edition = "2021"
+description = "CPU backend for the Reed finite element discretization library"
+
+[features]
+default = ["parallel"]
+parallel = ["rayon"]
+
+[dependencies]
+reed-core = { path = "../reed-core" }
+num-traits = { workspace = true }
+rayon = { workspace = true, optional = true }
