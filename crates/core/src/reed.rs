@@ -41,6 +41,22 @@ pub trait Backend<T: Scalar>: Send + Sync {
         q: usize,
         qmode: QuadMode,
     ) -> ReedResult<Box<dyn BasisTrait<T>>>;
+
+    /// Create an H1 Lagrange basis on a simplex reference element.
+    ///
+    /// # Parameters
+    /// * `topo`  — `ElemTopology::Triangle` or `ElemTopology::Tet`.
+    /// * `poly`  — polynomial order (1 = P1, 2 = P2).
+    /// * `ncomp` — number of field components.
+    /// * `q`     — number of quadrature points (see `SimplexBasis` docs for
+    ///             valid values per topology).
+    fn create_basis_h1_simplex(
+        &self,
+        topo: ElemTopology,
+        poly: usize,
+        ncomp: usize,
+        q: usize,
+    ) -> ReedResult<Box<dyn BasisTrait<T>>>;
 }
 
 /// Reed 顶层库上下文
@@ -109,6 +125,19 @@ impl<T: Scalar> Reed<T> {
     ) -> ReedResult<Box<dyn BasisTrait<T>>> {
         self.backend
             .create_basis_tensor_h1_lagrange(dim, ncomp, p, q, qmode)
+    }
+
+    /// Create an H1 Lagrange basis on a simplex reference element.
+    ///
+    /// See [`Backend::create_basis_h1_simplex`] for parameter details.
+    pub fn basis_h1_simplex(
+        &self,
+        topo: ElemTopology,
+        poly: usize,
+        ncomp: usize,
+        q: usize,
+    ) -> ReedResult<Box<dyn BasisTrait<T>>> {
+        self.backend.create_basis_h1_simplex(topo, poly, ncomp, q)
     }
 
     /// 获取后端引用

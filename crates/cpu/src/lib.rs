@@ -1,14 +1,23 @@
 pub mod basis_lagrange;
+pub mod basis_simplex;
 pub mod elem_restriction;
 pub mod gallery;
 pub mod operator;
 pub mod vector;
 
 use basis_lagrange::LagrangeBasis;
+use basis_simplex::SimplexBasis;
 use elem_restriction::CpuElemRestriction;
 use reed_core::{
-    basis::BasisTrait, elem_restriction::ElemRestrictionTrait, enums::QuadMode, error::ReedResult,
-    qfunction::QFunctionTrait, reed::Backend, scalar::Scalar, vector::VectorTrait, ReedError,
+    basis::BasisTrait,
+    elem_restriction::ElemRestrictionTrait,
+    enums::{ElemTopology, QuadMode},
+    error::ReedResult,
+    qfunction::QFunctionTrait,
+    reed::Backend,
+    scalar::Scalar,
+    vector::VectorTrait,
+    ReedError,
 };
 use vector::CpuVector;
 
@@ -81,6 +90,16 @@ impl<T: Scalar> Backend<T> for CpuBackend<T> {
         qmode: QuadMode,
     ) -> ReedResult<Box<dyn BasisTrait<T>>> {
         Ok(Box::new(LagrangeBasis::<T>::new(dim, ncomp, p, q, qmode)?))
+    }
+
+    fn create_basis_h1_simplex(
+        &self,
+        topo: ElemTopology,
+        poly: usize,
+        ncomp: usize,
+        q: usize,
+    ) -> ReedResult<Box<dyn BasisTrait<T>>> {
+        Ok(Box::new(SimplexBasis::<T>::new(topo, poly, ncomp, q)?))
     }
 }
 
