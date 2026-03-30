@@ -8,6 +8,8 @@ description = "Rust Efficient Extensible Discretization"
 members = [
     "crates/core",
     "crates/cpu",
+    "crates/wasm-runner",
+    "crates/wgpu",
 ]
 resolver = "2"
 
@@ -19,7 +21,9 @@ rayon = "1"
 [dependencies]
 reed-core = { path = "crates/core" }
 reed-cpu = { path = "crates/cpu", default-features = false }
+reed-wgpu = { path = "crates/wgpu", optional = true }
 
 [features]
 default = ["parallel"]
 parallel = ["reed-cpu/parallel"]
+wgpu-backend = ["dep:reed-wgpu"]

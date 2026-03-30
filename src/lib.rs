@@ -4,6 +4,8 @@ pub use reed_core::{
     TransposeMode, VectorTrait,
 };
 pub use reed_cpu::{q_function_by_name, CpuBackend, FieldVector, OperatorBuilder};
+#[cfg(feature = "wgpu-backend")]
+pub use reed_wgpu::WgpuBackend;
 
 use std::sync::Arc;
 
@@ -13,12 +15,27 @@ pub struct Reed<T: Scalar> {
 
 impl<T: Scalar> Reed<T> {
     pub fn init(resource: &str) -> ReedResult<Self> {
-        match resource {
-            "/cpu/self" | "/cpu/self/ref" => Ok(Self {
+        if matches!(resource, "/cpu/self" | "/cpu/self/ref") {
+            return Ok(Self {
                 inner: reed_core::Reed::from_backend(Arc::new(CpuBackend::<T>::new())),
-            }),
-            other => Err(ReedError::BackendNotSupported(other.into())),
+            });
         }
+
+        #[cfg(feature = "wgpu-backend")]
+        if matches!(resource, "/gpu/wgpu" | "/gpu/wgpu/ref") {
+            return Ok(Self {
+                inner: reed_core::Reed::from_backend(Arc::new(WgpuBackend::<T>::new())),
+            });
+        }
+
+        #[cfg(not(feature = "wgpu-backend"))]
+        if matches!(resource, "/gpu/wgpu" | "/gpu/wgpu/ref") {
+            return Err(ReedError::BackendNotSupported(
+                "wgpu backend is disabled; build with feature 'wgpu-backend'".into(),
+            ));
+        }
+
+        Err(ReedError::BackendNotSupported(resource.into()))
     }
 
     pub fn resource(&self) -> &str {

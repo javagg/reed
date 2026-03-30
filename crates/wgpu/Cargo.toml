@@ -1,0 +1,13 @@
+[package]
+name = "reed-wgpu"
+version = "0.1.0"
+edition = "2021"
+description = "WGPU backend for the Reed finite element discretization library"
+
+[dependencies]
+reed-core = { path = "../core" }
+reed-cpu = { path = "../cpu", default-features = false }
+num-traits = { workspace = true }
+wgpu = "0.20"
+pollster = "0.3"
+bytemuck = { version = "1", features = ["derive"] }
