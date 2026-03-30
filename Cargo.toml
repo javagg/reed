@@ -6,8 +6,8 @@ description = "Rust Efficient Extensible Discretization"
 
 [workspace]
 members = [
-    "crates/reed-core",
-    "crates/reed-cpu",
+    "crates/core",
+    "crates/cpu",
 ]
 resolver = "2"
 

@@ -10,6 +10,315 @@ pub struct Poisson1DApply {
     outputs: Vec<QFunctionField>,
 }
 
+pub struct Poisson2DBuild {
+    inputs: Vec<QFunctionField>,
+    outputs: Vec<QFunctionField>,
+}
+
+pub struct Poisson3DBuild {
+    inputs: Vec<QFunctionField>,
+    outputs: Vec<QFunctionField>,
+}
+
+impl Default for Poisson2DBuild {
+    fn default() -> Self {
+        Self {
+            inputs: vec![
+                QFunctionField {
+                    name: "dx".into(),
+                    num_comp: 4,
+                    eval_mode: EvalMode::Grad,
+                },
+                QFunctionField {
+                    name: "weights".into(),
+                    num_comp: 1,
+                    eval_mode: EvalMode::Weight,
+                },
+            ],
+            outputs: vec![QFunctionField {
+                name: "qdata".into(),
+                num_comp: 4,
+                eval_mode: EvalMode::None,
+            }],
+        }
+    }
+}
+
+impl QFunctionTrait<f64> for Poisson2DBuild {
+    fn inputs(&self) -> &[QFunctionField] {
+        &self.inputs
+    }
+
+    fn outputs(&self) -> &[QFunctionField] {
+        &self.outputs
+    }
+
+    fn apply(&self, q: usize, inputs: &[&[f64]], outputs: &mut [&mut [f64]]) -> ReedResult<()> {
+        if inputs.len() != 2 || outputs.len() != 1 {
+            return Err(ReedError::QFunction(
+                "Poisson2DBuild expects 2 inputs and 1 output".into(),
+            ));
+        }
+        let dx = inputs[0];
+        let weights = inputs[1];
+        let qdata = &mut outputs[0];
+        for i in 0..q {
+            let j00 = dx[i * 4];
+            let j01 = dx[i * 4 + 1];
+            let j10 = dx[i * 4 + 2];
+            let j11 = dx[i * 4 + 3];
+            let det_j = j00 * j11 - j01 * j10;
+            if det_j.abs() < 1.0e-14 {
+                return Err(ReedError::QFunction(
+                    "Poisson2DBuild encountered near-singular Jacobian".into(),
+                ));
+            }
+            let inv00 = j11 / det_j;
+            let inv01 = -j01 / det_j;
+            let inv10 = -j10 / det_j;
+            let inv11 = j00 / det_j;
+
+            // G = |detJ| * J^{-1} * J^{-T}
+            let scale = det_j.abs() * weights[i];
+            let g00 = scale * (inv00 * inv00 + inv01 * inv01);
+            let g01 = scale * (inv00 * inv10 + inv01 * inv11);
+            let g10 = scale * (inv10 * inv00 + inv11 * inv01);
+            let g11 = scale * (inv10 * inv10 + inv11 * inv11);
+
+            qdata[i * 4] = g00;
+            qdata[i * 4 + 1] = g01;
+            qdata[i * 4 + 2] = g10;
+            qdata[i * 4 + 3] = g11;
+        }
+        Ok(())
+    }
+}
+
+pub struct Poisson2DApply {
+    inputs: Vec<QFunctionField>,
+    outputs: Vec<QFunctionField>,
+}
+
+pub struct Poisson3DApply {
+    inputs: Vec<QFunctionField>,
+    outputs: Vec<QFunctionField>,
+}
+
+impl Default for Poisson2DApply {
+    fn default() -> Self {
+        Self {
+            inputs: vec![
+                QFunctionField {
+                    name: "du".into(),
+                    num_comp: 2,
+                    eval_mode: EvalMode::Grad,
+                },
+                QFunctionField {
+                    name: "qdata".into(),
+                    num_comp: 4,
+                    eval_mode: EvalMode::None,
+                },
+            ],
+            outputs: vec![QFunctionField {
+                name: "dv".into(),
+                num_comp: 2,
+                eval_mode: EvalMode::Grad,
+            }],
+        }
+    }
+}
+
+impl QFunctionTrait<f64> for Poisson2DApply {
+    fn inputs(&self) -> &[QFunctionField] {
+        &self.inputs
+    }
+
+    fn outputs(&self) -> &[QFunctionField] {
+        &self.outputs
+    }
+
+    fn apply(&self, q: usize, inputs: &[&[f64]], outputs: &mut [&mut [f64]]) -> ReedResult<()> {
+        if inputs.len() != 2 || outputs.len() != 1 {
+            return Err(ReedError::QFunction(
+                "Poisson2DApply expects 2 inputs and 1 output".into(),
+            ));
+        }
+        let du = inputs[0];
+        let qdata = inputs[1];
+        let dv = &mut outputs[0];
+        for i in 0..q {
+            let du0 = du[i * 2];
+            let du1 = du[i * 2 + 1];
+            let g00 = qdata[i * 4];
+            let g01 = qdata[i * 4 + 1];
+            let g10 = qdata[i * 4 + 2];
+            let g11 = qdata[i * 4 + 3];
+            dv[i * 2] = g00 * du0 + g01 * du1;
+            dv[i * 2 + 1] = g10 * du0 + g11 * du1;
+        }
+        Ok(())
+    }
+}
+
+impl Default for Poisson3DBuild {
+    fn default() -> Self {
+        Self {
+            inputs: vec![
+                QFunctionField {
+                    name: "dx".into(),
+                    num_comp: 9,
+                    eval_mode: EvalMode::Grad,
+                },
+                QFunctionField {
+                    name: "weights".into(),
+                    num_comp: 1,
+                    eval_mode: EvalMode::Weight,
+                },
+            ],
+            outputs: vec![QFunctionField {
+                name: "qdata".into(),
+                num_comp: 9,
+                eval_mode: EvalMode::None,
+            }],
+        }
+    }
+}
+
+impl QFunctionTrait<f64> for Poisson3DBuild {
+    fn inputs(&self) -> &[QFunctionField] {
+        &self.inputs
+    }
+
+    fn outputs(&self) -> &[QFunctionField] {
+        &self.outputs
+    }
+
+    fn apply(&self, q: usize, inputs: &[&[f64]], outputs: &mut [&mut [f64]]) -> ReedResult<()> {
+        if inputs.len() != 2 || outputs.len() != 1 {
+            return Err(ReedError::QFunction(
+                "Poisson3DBuild expects 2 inputs and 1 output".into(),
+            ));
+        }
+        let dx = inputs[0];
+        let weights = inputs[1];
+        let qdata = &mut outputs[0];
+        for i in 0..q {
+            let j00 = dx[i * 9];
+            let j01 = dx[i * 9 + 1];
+            let j02 = dx[i * 9 + 2];
+            let j10 = dx[i * 9 + 3];
+            let j11 = dx[i * 9 + 4];
+            let j12 = dx[i * 9 + 5];
+            let j20 = dx[i * 9 + 6];
+            let j21 = dx[i * 9 + 7];
+            let j22 = dx[i * 9 + 8];
+
+            let c00 = j11 * j22 - j12 * j21;
+            let c01 = -(j10 * j22 - j12 * j20);
+            let c02 = j10 * j21 - j11 * j20;
+            let c10 = -(j01 * j22 - j02 * j21);
+            let c11 = j00 * j22 - j02 * j20;
+            let c12 = -(j00 * j21 - j01 * j20);
+            let c20 = j01 * j12 - j02 * j11;
+            let c21 = -(j00 * j12 - j02 * j10);
+            let c22 = j00 * j11 - j01 * j10;
+
+            let det_j = j00 * c00 + j01 * c01 + j02 * c02;
+            if det_j.abs() < 1.0e-14 {
+                return Err(ReedError::QFunction(
+                    "Poisson3DBuild encountered near-singular Jacobian".into(),
+                ));
+            }
+
+            let inv00 = c00 / det_j;
+            let inv01 = c10 / det_j;
+            let inv02 = c20 / det_j;
+            let inv10 = c01 / det_j;
+            let inv11 = c11 / det_j;
+            let inv12 = c21 / det_j;
+            let inv20 = c02 / det_j;
+            let inv21 = c12 / det_j;
+            let inv22 = c22 / det_j;
+
+            let s = det_j.abs() * weights[i];
+            qdata[i * 9] = s * (inv00 * inv00 + inv01 * inv01 + inv02 * inv02);
+            qdata[i * 9 + 1] = s * (inv00 * inv10 + inv01 * inv11 + inv02 * inv12);
+            qdata[i * 9 + 2] = s * (inv00 * inv20 + inv01 * inv21 + inv02 * inv22);
+            qdata[i * 9 + 3] = s * (inv10 * inv00 + inv11 * inv01 + inv12 * inv02);
+            qdata[i * 9 + 4] = s * (inv10 * inv10 + inv11 * inv11 + inv12 * inv12);
+            qdata[i * 9 + 5] = s * (inv10 * inv20 + inv11 * inv21 + inv12 * inv22);
+            qdata[i * 9 + 6] = s * (inv20 * inv00 + inv21 * inv01 + inv22 * inv02);
+            qdata[i * 9 + 7] = s * (inv20 * inv10 + inv21 * inv11 + inv22 * inv12);
+            qdata[i * 9 + 8] = s * (inv20 * inv20 + inv21 * inv21 + inv22 * inv22);
+        }
+        Ok(())
+    }
+}
+
+impl Default for Poisson3DApply {
+    fn default() -> Self {
+        Self {
+            inputs: vec![
+                QFunctionField {
+                    name: "du".into(),
+                    num_comp: 3,
+                    eval_mode: EvalMode::Grad,
+                },
+                QFunctionField {
+                    name: "qdata".into(),
+                    num_comp: 9,
+                    eval_mode: EvalMode::None,
+                },
+            ],
+            outputs: vec![QFunctionField {
+                name: "dv".into(),
+                num_comp: 3,
+                eval_mode: EvalMode::Grad,
+            }],
+        }
+    }
+}
+
+impl QFunctionTrait<f64> for Poisson3DApply {
+    fn inputs(&self) -> &[QFunctionField] {
+        &self.inputs
+    }
+
+    fn outputs(&self) -> &[QFunctionField] {
+        &self.outputs
+    }
+
+    fn apply(&self, q: usize, inputs: &[&[f64]], outputs: &mut [&mut [f64]]) -> ReedResult<()> {
+        if inputs.len() != 2 || outputs.len() != 1 {
+            return Err(ReedError::QFunction(
+                "Poisson3DApply expects 2 inputs and 1 output".into(),
+            ));
+        }
+        let du = inputs[0];
+        let qdata = inputs[1];
+        let dv = &mut outputs[0];
+        for i in 0..q {
+            let du0 = du[i * 3];
+            let du1 = du[i * 3 + 1];
+            let du2 = du[i * 3 + 2];
+            let g00 = qdata[i * 9];
+            let g01 = qdata[i * 9 + 1];
+            let g02 = qdata[i * 9 + 2];
+            let g10 = qdata[i * 9 + 3];
+            let g11 = qdata[i * 9 + 4];
+            let g12 = qdata[i * 9 + 5];
+            let g20 = qdata[i * 9 + 6];
+            let g21 = qdata[i * 9 + 7];
+            let g22 = qdata[i * 9 + 8];
+
+            dv[i * 3] = g00 * du0 + g01 * du1 + g02 * du2;
+            dv[i * 3 + 1] = g10 * du0 + g11 * du1 + g12 * du2;
+            dv[i * 3 + 2] = g20 * du0 + g21 * du1 + g22 * du2;
+        }
+        Ok(())
+    }
+}
+
 impl Default for Poisson1DApply {
     fn default() -> Self {
         Self {

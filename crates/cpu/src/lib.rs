@@ -12,7 +12,10 @@ use reed_core::{
 };
 use vector::CpuVector;
 
-pub use gallery::{Mass1DBuild, MassApply, Poisson1DApply};
+pub use gallery::{
+    Mass1DBuild, Mass2DBuild, Mass3DBuild, MassApply, Poisson1DApply, Poisson2DApply,
+    Poisson2DBuild, Poisson3DApply, Poisson3DBuild,
+};
 pub use operator::{CpuOperator, FieldVector, OperatorBuilder};
 
 pub struct CpuBackend<T: Scalar> {
@@ -84,8 +87,14 @@ impl<T: Scalar> Backend<T> for CpuBackend<T> {
 pub fn q_function_by_name(name: &str) -> ReedResult<Box<dyn QFunctionTrait<f64>>> {
     match name {
         "Mass1DBuild" => Ok(Box::new(Mass1DBuild::default())),
+        "Mass2DBuild" => Ok(Box::new(Mass2DBuild::default())),
+        "Mass3DBuild" => Ok(Box::new(Mass3DBuild::default())),
         "MassApply" => Ok(Box::new(MassApply::default())),
         "Poisson1DApply" => Ok(Box::new(Poisson1DApply::default())),
+        "Poisson2DBuild" => Ok(Box::new(Poisson2DBuild::default())),
+        "Poisson2DApply" => Ok(Box::new(Poisson2DApply::default())),
+        "Poisson3DBuild" => Ok(Box::new(Poisson3DBuild::default())),
+        "Poisson3DApply" => Ok(Box::new(Poisson3DApply::default())),
         other => Err(ReedError::QFunction(format!(
             "unknown CPU gallery qfunction '{}'",
             other

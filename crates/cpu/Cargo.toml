@@ -9,6 +9,6 @@ default = ["parallel"]
 parallel = ["rayon"]
 
 [dependencies]
-reed-core = { path = "../reed-core" }
+reed-core = { path = "../core" }
 num-traits = { workspace = true }
 rayon = { workspace = true, optional = true }

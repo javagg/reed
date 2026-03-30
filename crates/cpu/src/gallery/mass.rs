@@ -64,6 +64,132 @@ pub struct MassApply {
     outputs: Vec<QFunctionField>,
 }
 
+pub struct Mass2DBuild {
+    inputs: Vec<QFunctionField>,
+    outputs: Vec<QFunctionField>,
+}
+
+pub struct Mass3DBuild {
+    inputs: Vec<QFunctionField>,
+    outputs: Vec<QFunctionField>,
+}
+
+impl Default for Mass2DBuild {
+    fn default() -> Self {
+        Self {
+            inputs: vec![
+                QFunctionField {
+                    name: "dx".into(),
+                    num_comp: 4,
+                    eval_mode: EvalMode::Grad,
+                },
+                QFunctionField {
+                    name: "weights".into(),
+                    num_comp: 1,
+                    eval_mode: EvalMode::Weight,
+                },
+            ],
+            outputs: vec![QFunctionField {
+                name: "qdata".into(),
+                num_comp: 1,
+                eval_mode: EvalMode::None,
+            }],
+        }
+    }
+}
+
+impl QFunctionTrait<f64> for Mass2DBuild {
+    fn inputs(&self) -> &[QFunctionField] {
+        &self.inputs
+    }
+
+    fn outputs(&self) -> &[QFunctionField] {
+        &self.outputs
+    }
+
+    fn apply(&self, q: usize, inputs: &[&[f64]], outputs: &mut [&mut [f64]]) -> ReedResult<()> {
+        if inputs.len() != 2 || outputs.len() != 1 {
+            return Err(ReedError::QFunction(
+                "Mass2DBuild expects 2 inputs and 1 output".into(),
+            ));
+        }
+        let dx = inputs[0];
+        let weights = inputs[1];
+        let qdata = &mut outputs[0];
+        for i in 0..q {
+            let g00 = dx[i * 4];
+            let g01 = dx[i * 4 + 1];
+            let g10 = dx[i * 4 + 2];
+            let g11 = dx[i * 4 + 3];
+            let det_j = g00 * g11 - g01 * g10;
+            qdata[i] = det_j.abs() * weights[i];
+        }
+        Ok(())
+    }
+}
+
+impl Default for Mass3DBuild {
+    fn default() -> Self {
+        Self {
+            inputs: vec![
+                QFunctionField {
+                    name: "dx".into(),
+                    num_comp: 9,
+                    eval_mode: EvalMode::Grad,
+                },
+                QFunctionField {
+                    name: "weights".into(),
+                    num_comp: 1,
+                    eval_mode: EvalMode::Weight,
+                },
+            ],
+            outputs: vec![QFunctionField {
+                name: "qdata".into(),
+                num_comp: 1,
+                eval_mode: EvalMode::None,
+            }],
+        }
+    }
+}
+
+impl QFunctionTrait<f64> for Mass3DBuild {
+    fn inputs(&self) -> &[QFunctionField] {
+        &self.inputs
+    }
+
+    fn outputs(&self) -> &[QFunctionField] {
+        &self.outputs
+    }
+
+    fn apply(&self, q: usize, inputs: &[&[f64]], outputs: &mut [&mut [f64]]) -> ReedResult<()> {
+        if inputs.len() != 2 || outputs.len() != 1 {
+            return Err(ReedError::QFunction(
+                "Mass3DBuild expects 2 inputs and 1 output".into(),
+            ));
+        }
+        let dx = inputs[0];
+        let weights = inputs[1];
+        let qdata = &mut outputs[0];
+        for i in 0..q {
+            let j00 = dx[i * 9];
+            let j01 = dx[i * 9 + 1];
+            let j02 = dx[i * 9 + 2];
+            let j10 = dx[i * 9 + 3];
+            let j11 = dx[i * 9 + 4];
+            let j12 = dx[i * 9 + 5];
+            let j20 = dx[i * 9 + 6];
+            let j21 = dx[i * 9 + 7];
+            let j22 = dx[i * 9 + 8];
+
+            let det_j = j00 * (j11 * j22 - j12 * j21)
+                - j01 * (j10 * j22 - j12 * j20)
+                + j02 * (j10 * j21 - j11 * j20);
+            qdata[i] = det_j.abs() * weights[i];
+        }
+        Ok(())
+    }
+}
+
 impl Default for MassApply {
     fn default() -> Self {
         Self {
