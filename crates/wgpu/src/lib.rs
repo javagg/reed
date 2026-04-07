@@ -1,23 +1,94 @@
+mod basis;
+mod elem_restriction;
+mod runtime;
+mod vector;
+
+use crate::runtime::GpuRuntime;
 use reed_core::{
-    basis::BasisTrait, elem_restriction::ElemRestrictionTrait, enums::QuadMode, error::ReedResult,
-    reed::Backend, scalar::Scalar, vector::VectorTrait, ReedError,
+    BasisTrait, ElemRestrictionTrait, VectorTrait, enums::*, error::{ReedError, ReedResult},
+    scalar::Scalar,
 };
 use std::sync::Arc;
 
-mod runtime;
-mod basis;
-mod elem_restriction;
-mod vector;
+/// 后端工厂 trait（各后端实现此 trait）
+#[cfg(not(target_arch = "wasm32"))]
+pub trait Backend<T: Scalar>: Send + Sync {
+    fn resource_name(&self) -> &str;
 
-use basis::WgpuBasis;
-use elem_restriction::WgpuElemRestriction;
-use runtime::GpuRuntime;
-use vector::WgpuVector;
+    fn create_vector(&self, size: usize) -> ReedResult<Box<dyn VectorTrait<T>>>;
+
+    fn create_elem_restriction(
+        &self,
+        nelem: usize,
+        elemsize: usize,
+        ncomp: usize,
+        compstride: usize,
+        lsize: usize,
+        offsets: &[i32],
+    ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>>;
+
+    fn create_strided_elem_restriction(
+        &self,
+        nelem: usize,
+        elemsize: usize,
+        ncomp: usize,
+        lsize: usize,
+        strides: [i32; 3],
+    ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>>;
+
+    fn create_basis_tensor_h1_lagrange(
+        &self,
+        dim: usize,
+        ncomp: usize,
+        p: usize,
+        q: usize,
+        qmode: QuadMode,
+    ) -> ReedResult<Box<dyn BasisTrait<T>>>;
+}
+
+/// WASM variant — wgpu::Device is not Send+Sync in browser.
+#[cfg(target_arch = "wasm32")]
+pub trait Backend<T: Scalar> {
+    fn resource_name(&self) -> &str;
+
+    fn create_vector(&self, size: usize) -> ReedResult<Box<dyn VectorTrait<T>>>;
+
+    fn create_elem_restriction(
+        &self,
+        nelem: usize,
+        elemsize: usize,
+        ncomp: usize,
+        compstride: usize,
+        lsize: usize,
+        offsets: &[i32],
+    ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>>;
+
+    fn create_strided_elem_restriction(
+        &self,
+        nelem: usize,
+        elemsize: usize,
+        ncomp: usize,
+        lsize: usize,
+        strides: [i32; 3],
+    ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>>;
+
+    fn create_basis_tensor_h1_lagrange(
+        &self,
+        dim: usize,
+        ncomp: usize,
+        p: usize,
+        q: usize,
+        qmode: QuadMode,
+    ) -> ReedResult<Box<dyn BasisTrait<T>>>;
+}
 
 pub struct WgpuBackend<T: Scalar> {
     gpu_available: bool,
     adapter_name: Option<String>,
     runtime: Option<Arc<GpuRuntime>>,
+    /// CPU fallback for basis creation on WASM (where GPU basis is unavailable).
+    #[allow(dead_code)]
+    cpu_backend: reed_cpu::CpuBackend<T>,
     _marker: std::marker::PhantomData<T>,
 }
 
@@ -27,7 +98,20 @@ impl<T: Scalar> Default for WgpuBackend<T> {
     }
 }
 
+impl<T: Scalar> Clone for WgpuBackend<T> {
+    fn clone(&self) -> Self {
+        Self {
+            gpu_available: self.gpu_available,
+            adapter_name: self.adapter_name.clone(),
+            runtime: self.runtime.clone(),
+            cpu_backend: reed_cpu::CpuBackend::new(),
+            _marker: std::marker::PhantomData,
+        }
+    }
+}
+
 impl<T: Scalar> WgpuBackend<T> {
+    /// Synchronous init — uses pollster internally (native only).
     pub fn new() -> Self {
         let instance = wgpu::Instance::default();
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -48,6 +132,42 @@ impl<T: Scalar> WgpuBackend<T> {
             gpu_available,
             adapter_name,
             runtime,
+            cpu_backend: reed_cpu::CpuBackend::new(),
+            _marker: std::marker::PhantomData,
+        }
+    }
+
+    /// Async init for WASM (no pollster — await the WebGPU futures).
+    pub async fn new_async() -> Self {
+        let instance = wgpu::Instance::default();
+        let runtime = GpuRuntime::new_async(
+            &instance,
+            wgpu::PowerPreference::HighPerformance,
+            false,
+        )
+        .await
+        .map(Arc::new);
+        let (gpu_available, adapter_name) = if runtime.is_some() {
+            (true, Some("WebGPU (WGSL compute)".to_string()))
+        } else {
+            (false, None)
+        };
+        Self {
+            gpu_available,
+            adapter_name,
+            runtime,
+            cpu_backend: reed_cpu::CpuBackend::new(),
+            _marker: std::marker::PhantomData,
+        }
+    }
+
+    /// Build from an already-initialized GpuRuntime.
+    pub fn from_runtime(runtime: Arc<GpuRuntime>, adapter_name: Option<String>) -> Self {
+        Self {
+            gpu_available: true,
+            adapter_name,
+            runtime: Some(runtime),
+            cpu_backend: reed_cpu::CpuBackend::new(),
             _marker: std::marker::PhantomData,
         }
     }
@@ -61,13 +181,65 @@ impl<T: Scalar> WgpuBackend<T> {
     }
 }
 
+// Also implement reed_core::Backend so it satisfies reed::Backend (= reed_core::Backend).
+// This impl is only available on non-WASM where wgpu::Device is Send+Sync.
+#[cfg(not(target_arch = "wasm32"))]
+impl<T: Scalar> reed_core::Backend<T> for WgpuBackend<T> {
+    fn resource_name(&self) -> &str {
+        <Self as Backend<T>>::resource_name(self)
+    }
+
+    fn create_vector(&self, size: usize) -> reed_core::ReedResult<Box<dyn reed_core::VectorTrait<T>>> {
+        Backend::<T>::create_vector(self, size)
+    }
+
+    fn create_elem_restriction(
+        &self,
+        nelem: usize,
+        elemsize: usize,
+        ncomp: usize,
+        compstride: usize,
+        lsize: usize,
+        offsets: &[i32],
+    ) -> reed_core::ReedResult<Box<dyn reed_core::ElemRestrictionTrait<T>>> {
+        Backend::<T>::create_elem_restriction(self, nelem, elemsize, ncomp, compstride, lsize, offsets)
+    }
+
+    fn create_strided_elem_restriction(
+        &self,
+        nelem: usize,
+        elemsize: usize,
+        ncomp: usize,
+        lsize: usize,
+        strides: [i32; 3],
+    ) -> reed_core::ReedResult<Box<dyn reed_core::ElemRestrictionTrait<T>>> {
+        Backend::<T>::create_strided_elem_restriction(self, nelem, elemsize, ncomp, lsize, strides)
+    }
+
+    fn create_basis_tensor_h1_lagrange(
+        &self,
+        dim: usize,
+        ncomp: usize,
+        p: usize,
+        q: usize,
+        qmode: reed_core::enums::QuadMode,
+    ) -> reed_core::ReedResult<Box<dyn reed_core::BasisTrait<T>>> {
+        Backend::<T>::create_basis_tensor_h1_lagrange(self, dim, ncomp, p, q, qmode)
+    }
+}
+
+/// Non-WASM impl: WgpuBackend implements reed_wgpu::Backend with Send+Sync bounds.
+#[cfg(not(target_arch = "wasm32"))]
 impl<T: Scalar> Backend<T> for WgpuBackend<T> {
     fn resource_name(&self) -> &str {
         "/gpu/wgpu"
     }
 
     fn create_vector(&self, size: usize) -> ReedResult<Box<dyn VectorTrait<T>>> {
-        Ok(Box::new(WgpuVector::<T>::new(size, self.runtime.clone())))
+        Ok(Box::new(crate::vector::WgpuVector::<T>::new(
+            size,
+            self.runtime.clone(),
+        )))
     }
 
     fn create_elem_restriction(
@@ -79,7 +251,7 @@ impl<T: Scalar> Backend<T> for WgpuBackend<T> {
         lsize: usize,
         offsets: &[i32],
     ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>> {
-        Ok(Box::new(WgpuElemRestriction::<T>::new_offset(
+        Ok(Box::new(crate::elem_restriction::WgpuElemRestriction::<T>::new_offset(
             nelem,
             elemsize,
             ncomp,
@@ -98,7 +270,7 @@ impl<T: Scalar> Backend<T> for WgpuBackend<T> {
         lsize: usize,
         strides: [i32; 3],
     ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>> {
-        Ok(Box::new(WgpuElemRestriction::<T>::new_strided(
+        Ok(Box::new(crate::elem_restriction::WgpuElemRestriction::<T>::new_strided(
             nelem,
             elemsize,
             ncomp,
@@ -116,7 +288,7 @@ impl<T: Scalar> Backend<T> for WgpuBackend<T> {
         q: usize,
         qmode: QuadMode,
     ) -> ReedResult<Box<dyn BasisTrait<T>>> {
-        Ok(Box::new(WgpuBasis::<T>::new(
+        Ok(Box::new(crate::basis::WgpuBasis::<T>::new(
             dim,
             ncomp,
             p,
@@ -124,6 +296,73 @@ impl<T: Scalar> Backend<T> for WgpuBackend<T> {
             qmode,
             self.runtime.clone(),
         )?))
+    }
+}
+
+/// WASM-only impl: on WASM, basis creation falls back to CPU since GPU basis is unavailable.
+#[cfg(target_arch = "wasm32")]
+impl<T: Scalar> reed_core::Backend<T> for WgpuBackend<T> {
+    fn resource_name(&self) -> &str {
+        "/gpu/wgpu"
+    }
+
+    fn create_vector(&self, size: usize) -> ReedResult<Box<dyn VectorTrait<T>>> {
+        // On WASM, fall back to CPU vector (data stays on CPU, no GPU transfer needed for now)
+        Ok(Box::new(crate::vector::WgpuVector::<T>::new(
+            size,
+            self.runtime.clone(),
+        )))
+    }
+
+    fn create_elem_restriction(
+        &self,
+        nelem: usize,
+        elemsize: usize,
+        ncomp: usize,
+        compstride: usize,
+        lsize: usize,
+        offsets: &[i32],
+    ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>> {
+        Ok(Box::new(crate::elem_restriction::WgpuElemRestriction::<T>::new_offset(
+            nelem,
+            elemsize,
+            ncomp,
+            compstride,
+            lsize,
+            offsets,
+            self.runtime.clone(),
+        )?))
+    }
+
+    fn create_strided_elem_restriction(
+        &self,
+        nelem: usize,
+        elemsize: usize,
+        ncomp: usize,
+        lsize: usize,
+        strides: [i32; 3],
+    ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>> {
+        Ok(Box::new(crate::elem_restriction::WgpuElemRestriction::<T>::new_strided(
+            nelem,
+            elemsize,
+            ncomp,
+            lsize,
+            strides,
+            self.runtime.clone(),
+        )?))
+    }
+
+    fn create_basis_tensor_h1_lagrange(
+        &self,
+        dim: usize,
+        ncomp: usize,
+        p: usize,
+        q: usize,
+        qmode: QuadMode,
+    ) -> ReedResult<Box<dyn BasisTrait<T>>> {
+        // On WASM, WgpuBasis doesn't implement BasisTrait (GPU runtime is not Send+Sync).
+        // Fall back to CPU LagrangeBasis for basis evaluation.
+        reed_core::Backend::create_basis_tensor_h1_lagrange(&self.cpu_backend, dim, ncomp, p, q, qmode)
     }
 }
 

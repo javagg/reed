@@ -2,7 +2,7 @@ use std::{any::TypeId, sync::Arc};
 
 use num_traits::NumCast;
 use reed_core::{
-    enums::NormType, error::ReedResult, scalar::Scalar, vector::VectorTrait, ReedError,
+    enums::NormType, error::ReedResult, scalar::Scalar, VectorTrait, ReedError,
 };
 use wgpu::util::DeviceExt;
 

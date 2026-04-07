@@ -34,6 +34,24 @@ self.onmessage = async (event) => {
   try {
     await ensureWasm(jobId);
 
+    // ── wgpu: one-time async init ──────────────────────────────────────────────
+    if (payload.backend === 'wasm-gpu') {
+      const initMsg = {
+        type: 'log',
+        jobId,
+        message: `Initializing wgpu for ${payload.example} in ${payload.dim}D...`,
+      };
+      self.postMessage(initMsg);
+
+      const adapterName = await wasmModule.init_wgpu();
+      const readyMsg = {
+        type: 'log',
+        jobId,
+        message: `wgpu ready: ${adapterName}`,
+      };
+      self.postMessage(readyMsg);
+    }
+
     const startMsg = {
       type: 'log',
       jobId,
@@ -41,14 +59,16 @@ self.onmessage = async (event) => {
     };
     self.postMessage(startMsg);
 
+    // run_example takes a single args object (wasm-bindgen compatible)
     const t0 = performance.now();
-    const data = wasmModule.run_example(
-      payload.example,
-      payload.dim,
-      payload.nelem,
-      payload.p,
-      payload.q,
-    );
+    const data = wasmModule.run_example({
+      backend: payload.backend,
+      example: payload.example,
+      dim: payload.dim,
+      nelem: payload.nelem,
+      p: payload.p,
+      q: payload.q,
+    });
     const t1 = performance.now();
 
     const workerTimingLog = {
@@ -65,7 +85,7 @@ self.onmessage = async (event) => {
       }
     }
 
-    data.backend = payload.backend;
+    // data.backend is now set by run_example itself
 
     const done = {
       type: 'result',

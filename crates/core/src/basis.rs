@@ -1,6 +1,10 @@
 use crate::{enums::EvalMode, error::ReedResult, scalar::Scalar};
 
 /// 参考单元基函数 trait
+///
+/// On WASM targets, the `Send + Sync` bounds are omitted because the wgpu
+/// Device stored in WgpuBasis is not thread-safe on WASM.
+#[cfg(not(target_arch = "wasm32"))]
 pub trait BasisTrait<T: Scalar>: Send + Sync {
     /// 空间拓扑维度
     fn dim(&self) -> usize;
@@ -33,5 +37,24 @@ pub trait BasisTrait<T: Scalar>: Send + Sync {
     fn q_weights(&self) -> &[T];
 
     /// 积分点坐标（参考单元，行主序 [nqpts × dim]）
+    fn q_ref(&self) -> &[T];
+}
+
+/// WASM variant without Send+Sync bounds.
+#[cfg(target_arch = "wasm32")]
+pub trait BasisTrait<T: Scalar> {
+    fn dim(&self) -> usize;
+    fn num_dof(&self) -> usize;
+    fn num_qpoints(&self) -> usize;
+    fn num_comp(&self) -> usize;
+    fn apply(
+        &self,
+        num_elem: usize,
+        transpose: bool,
+        eval_mode: EvalMode,
+        u: &[T],
+        v: &mut [T],
+    ) -> ReedResult<()>;
+    fn q_weights(&self) -> &[T];
     fn q_ref(&self) -> &[T];
 }

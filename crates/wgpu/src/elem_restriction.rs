@@ -2,7 +2,7 @@ use std::{any::TypeId, sync::Arc};
 
 use num_traits::NumCast;
 use reed_core::{
-    elem_restriction::ElemRestrictionTrait, enums::TransposeMode, error::ReedResult,
+    ElemRestrictionTrait, enums::TransposeMode, error::ReedResult,
     scalar::Scalar, ReedError,
 };
 use reed_cpu::elem_restriction::CpuElemRestriction;

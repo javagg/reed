@@ -9,20 +9,28 @@ pub struct QFunctionField {
 }
 
 /// 积分点点态算符 trait
+#[cfg(not(target_arch = "wasm32"))]
 pub trait QFunctionTrait<T: Scalar>: Send + Sync {
-    /// 输入字段描述
     fn inputs(&self) -> &[QFunctionField];
-
-    /// 输出字段描述
     fn outputs(&self) -> &[QFunctionField];
+    fn apply(&self, q: usize, inputs: &[&[T]], outputs: &mut [&mut [T]]) -> ReedResult<()>;
+}
 
-    /// 在 `q` 个积分点上求值
+#[cfg(target_arch = "wasm32")]
+pub trait QFunctionTrait<T: Scalar> {
+    fn inputs(&self) -> &[QFunctionField];
+    fn outputs(&self) -> &[QFunctionField];
     fn apply(&self, q: usize, inputs: &[&[T]], outputs: &mut [&mut [T]]) -> ReedResult<()>;
 }
 
 /// 用户闭包类型别名
+#[cfg(not(target_arch = "wasm32"))]
 pub type QFunctionClosure<T> =
     dyn Fn(usize, &[&[T]], &mut [&mut [T]]) -> ReedResult<()> + Send + Sync;
+
+#[cfg(target_arch = "wasm32")]
+pub type QFunctionClosure<T> =
+    dyn Fn(usize, &[&[T]], &mut [&mut [T]]) -> ReedResult<()>;
 
 /// 基于闭包的 QFunction 实现。
 pub struct ClosureQFunction<T: Scalar> {

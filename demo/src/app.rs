@@ -259,7 +259,17 @@ pub fn app() -> Html {
     };
 
     // ── 参数变更回调 ──────────────────────────────────────────────────────────
-    let on_backend_change = Callback::from(|_: Event| {});
+    let on_backend_change = {
+        let payload = payload.clone();
+        Callback::from(move |e: Event| {
+            let sel: HtmlSelectElement = e.target().unwrap().dyn_into().unwrap();
+            let backend = match sel.value().as_str() {
+                "wasm-gpu" => BackendName::WasmGpu,
+                _ => BackendName::WasmCpu,
+            };
+            payload.set(RunPayload { backend, ..(*payload).clone() });
+        })
+    };
 
     let on_example_change = {
         let payload = payload.clone();
@@ -331,7 +341,8 @@ pub fn app() -> Html {
                     <label>
                         {"Backend"}
                         <select onchange={on_backend_change}>
-                            <option value="wasm-cpu" selected=true>{ payload.backend.label() }</option>
+                            <option value="wasm-cpu" selected={payload.backend.as_str() == "wasm-cpu"}>{"WASM CPU"}</option>
+                            <option value="wasm-gpu" selected={payload.backend.as_str() == "wasm-gpu"}>{"WASM GPU (wgpu/WebGPU)"}</option>
                         </select>
                     </label>
 

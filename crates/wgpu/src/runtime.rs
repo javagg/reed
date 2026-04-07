@@ -16,6 +16,7 @@ pub struct GpuRuntime {
 }
 
 impl GpuRuntime {
+    /// Synchronous init (native platforms — uses pollster internally).
     pub fn new(adapter: &wgpu::Adapter) -> Option<Self> {
         let req = pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
@@ -26,7 +27,42 @@ impl GpuRuntime {
             None,
         ));
         let (device, queue) = req.ok()?;
+        Some(Self::from_device_queue(device, queue))
+    }
 
+    /// Async init for WASM (no pollster — await the WebGPU futures).
+    pub async fn new_async(
+        instance: &wgpu::Instance,
+        power_pref: wgpu::PowerPreference,
+        force_fallback: bool,
+    ) -> Option<Self> {
+        let Some(adapter) = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: power_pref,
+                force_fallback_adapter: force_fallback,
+                compatible_surface: None,
+            })
+            .await else {
+            return None;
+        };
+
+        let (device, queue) = adapter
+            .request_device(
+                &wgpu::DeviceDescriptor {
+                    label: Some("reed-wgpu-device"),
+                    required_features: wgpu::Features::empty(),
+                    required_limits: wgpu::Limits::downlevel_webgl2_defaults(),
+                },
+                None,
+            )
+            .await
+            .ok()?;
+
+        Some(Self::from_device_queue(device, queue))
+    }
+
+    /// Build from an already-instantiated device + queue.
+    pub fn from_device_queue(device: wgpu::Device, queue: wgpu::Queue) -> Self {
         let set_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("reed-set-layout"),
             entries: &[
@@ -115,51 +151,52 @@ impl GpuRuntime {
             ],
         });
 
-        let restriction_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("reed-restriction-layout"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+        let restriction_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("reed-restriction-layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 3,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
                     },
-                    count: None,
-                },
-            ],
-        });
+                ],
+            });
 
         let basis_interp_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -216,7 +253,7 @@ impl GpuRuntime {
         let basis_interp_pipeline =
             create_pipeline(&device, &basis_interp_layout, "basis_interp_main");
 
-        Some(Self {
+        Self {
             device,
             queue,
             set_layout,
@@ -229,7 +266,7 @@ impl GpuRuntime {
             restriction_pipeline,
             basis_interp_layout,
             basis_interp_pipeline,
-        })
+        }
     }
 
     pub fn shared(self) -> Arc<Self> {

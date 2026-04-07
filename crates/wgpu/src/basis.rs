@@ -2,7 +2,7 @@ use std::{any::TypeId, sync::Arc};
 
 use num_traits::NumCast;
 use reed_core::{
-    basis::BasisTrait,
+    BasisTrait,
     enums::{EvalMode, QuadMode},
     error::ReedResult,
     scalar::Scalar,
@@ -189,6 +189,9 @@ impl<T: Scalar> WgpuBasis<T> {
     }
 }
 
+/// On WASM, wgpu::Device (inside GpuRuntime) is not Send+Sync, so the
+/// BasisTrait impl is restricted to non-WASM targets only.
+#[cfg(not(target_arch = "wasm32"))]
 impl<T: Scalar> BasisTrait<T> for WgpuBasis<T> {
     fn dim(&self) -> usize {
         self.cpu_fallback.dim()

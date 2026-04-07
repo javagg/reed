@@ -1,7 +1,7 @@
 pub use reed_core::{
-    BasisTrait, ClosureQFunction, ElemRestrictionTrait, EvalMode, NormType, OperatorTrait,
-    QFunctionClosure, QFunctionField, QFunctionTrait, QuadMode, ReedError, ReedResult, Scalar,
-    TransposeMode, VectorTrait,
+    Backend, BasisTrait, ClosureQFunction, ElemRestrictionTrait, EvalMode,
+    OperatorTrait, QFunctionClosure, QFunctionField, QFunctionTrait, QuadMode, ReedError,
+    ReedResult, Scalar, TransposeMode, VectorTrait,
 };
 pub use reed_cpu::{q_function_by_name, CpuBackend, FieldVector, OperatorBuilder};
 #[cfg(feature = "wgpu-backend")]
@@ -38,7 +38,14 @@ impl<T: Scalar> Reed<T> {
         Err(ReedError::BackendNotSupported(resource.into()))
     }
 
-    pub fn resource(&self) -> &str {
+    /// Build a Reed context from a pre-configured backend.
+    pub fn from_backend(backend: Arc<dyn Backend<T>>) -> Self {
+        Self {
+            inner: reed_core::Reed::from_backend(backend),
+        }
+    }
+
+    pub fn resource(&self) -> String {
         self.inner.resource()
     }
 

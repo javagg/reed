@@ -24,15 +24,23 @@ impl ExampleName {
 pub enum BackendName {
     #[serde(rename = "wasm-cpu")]
     WasmCpu,
+    #[serde(rename = "wasm-gpu")]
+    WasmGpu,
 }
 
 impl BackendName {
     pub fn as_str(&self) -> &'static str {
-        "wasm-cpu"
+        match self {
+            BackendName::WasmCpu => "wasm-cpu",
+            BackendName::WasmGpu => "wasm-gpu",
+        }
     }
 
     pub fn label(&self) -> &'static str {
-        "WASM CPU (current)"
+        match self {
+            BackendName::WasmCpu => "WASM CPU",
+            BackendName::WasmGpu => "WASM GPU (wgpu/WebGPU)",
+        }
     }
 }
 
