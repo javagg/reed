@@ -179,7 +179,7 @@ impl<T: Scalar> Reed<T> {
         ncomp: usize,
         q: usize,
     ) -> ReedResult<Box<dyn BasisTrait<T>>> {
-        self.backend.create_basis_h1_simplex(topo, poly, ncomp, q)
+        (**self.backend.lock().unwrap()).create_basis_h1_simplex(topo, poly, ncomp, q)
     }
 
     /// 获取后端引用
