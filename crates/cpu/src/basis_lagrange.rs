@@ -1,4 +1,6 @@
 use reed_core::{basis::BasisTrait, enums::EvalMode, error::ReedResult, scalar::Scalar, ReedError};
+#[cfg(target_arch = "x86_64")]
+use std::any::TypeId;
 
 #[cfg(feature = "parallel")]
 const PAR_MIN_ELEMS_PER_TASK: usize = 128;
@@ -260,44 +262,51 @@ impl<T: Scalar> LagrangeBasis<T> {
         for comp in 0..self.ncomp {
             if transpose {
                 tmp.fill(T::ZERO);
-                for py in 0..self.p {
-                    for qx in 0..self.q {
-                        let mut sum = T::ZERO;
-                        for qy in 0..self.q {
-                            sum += self.interp[qy * self.p + py]
-                                * u_elem[(qy * self.q + qx) * self.ncomp + comp];
-                        }
-                        tmp[py * self.q + qx] = sum;
-                    }
+                for qx in 0..self.q {
+                    tensor_contract_strided(
+                        &self.interp,
+                        &u_elem[qx * self.ncomp + comp..],
+                        self.q * self.ncomp,
+                        &mut tmp[qx..],
+                        self.q,
+                        self.q,
+                        self.p,
+                        true,
+                    );
                 }
                 for py in 0..self.p {
-                    for px in 0..self.p {
-                        let mut sum = T::ZERO;
-                        for qx in 0..self.q {
-                            sum += self.interp[qx * self.p + px] * tmp[py * self.q + qx];
-                        }
-                        v_elem[comp * pp + py * self.p + px] = sum;
-                    }
+                    tensor_contract(
+                        &self.interp,
+                        &tmp[py * self.q..(py + 1) * self.q],
+                        &mut v_elem[comp * pp + py * self.p..comp * pp + (py + 1) * self.p],
+                        self.q,
+                        self.p,
+                        true,
+                    );
                 }
             } else {
                 let u_comp = &u_elem[comp * pp..(comp + 1) * pp];
                 for py in 0..self.p {
-                    for qx in 0..self.q {
-                        let mut sum = T::ZERO;
-                        for px in 0..self.p {
-                            sum += self.interp[qx * self.p + px] * u_comp[py * self.p + px];
-                        }
-                        tmp[py * self.q + qx] = sum;
-                    }
+                    tensor_contract(
+                        &self.interp,
+                        &u_comp[py * self.p..(py + 1) * self.p],
+                        &mut tmp[py * self.q..(py + 1) * self.q],
+                        self.q,
+                        self.p,
+                        false,
+                    );
                 }
-                for qy in 0..self.q {
-                    for qx in 0..self.q {
-                        let mut sum = T::ZERO;
-                        for py in 0..self.p {
-                            sum += self.interp[qy * self.p + py] * tmp[py * self.q + qx];
-                        }
-                        v_elem[(qy * self.q + qx) * self.ncomp + comp] = sum;
-                    }
+                for qx in 0..self.q {
+                    tensor_contract_strided(
+                        &self.interp,
+                        &tmp[qx..],
+                        self.q,
+                        &mut v_elem[qx * self.ncomp + comp..],
+                        self.q * self.ncomp,
+                        self.q,
+                        self.p,
+                        false,
+                    );
                 }
             }
         }
@@ -334,28 +343,32 @@ impl<T: Scalar> LagrangeBasis<T> {
                 }
                 for pz in 0..self.p {
                     for py in 0..self.p {
-                        for px in 0..self.p {
-                            let mut sum = T::ZERO;
-                            for qx in 0..self.q {
-                                sum += self.interp[qx * self.p + px]
-                                    * tmp_xy[(pz * self.p + py) * self.q + qx];
-                            }
-                            v_elem[comp * ppp + (pz * p2 + py * self.p + px)] = sum;
-                        }
+                        let row = (pz * self.p + py) * self.q;
+                        let dst = comp * ppp + pz * p2 + py * self.p;
+                        tensor_contract(
+                            &self.interp,
+                            &tmp_xy[row..row + self.q],
+                            &mut v_elem[dst..dst + self.p],
+                            self.q,
+                            self.p,
+                            true,
+                        );
                     }
                 }
             } else {
                 let u_comp = &u_elem[comp * ppp..(comp + 1) * ppp];
                 for pz in 0..self.p {
                     for py in 0..self.p {
-                        for qx in 0..self.q {
-                            let mut sum = T::ZERO;
-                            for px in 0..self.p {
-                                sum += self.interp[qx * self.p + px]
-                                    * u_comp[pz * p2 + py * self.p + px];
-                            }
-                            tmp_x[(pz * self.p + py) * self.q + qx] = sum;
-                        }
+                        let src = pz * p2 + py * self.p;
+                        let dst = (pz * self.p + py) * self.q;
+                        tensor_contract(
+                            &self.interp,
+                            &u_comp[src..src + self.p],
+                            &mut tmp_x[dst..dst + self.q],
+                            self.q,
+                            self.p,
+                            false,
+                        );
                     }
                 }
                 for pz in 0..self.p {
@@ -419,62 +432,94 @@ impl<T: Scalar> LagrangeBasis<T> {
                 let mut accum_x = vec![T::ZERO; pp];
                 let mut accum_y = vec![T::ZERO; pp];
 
-                for py in 0..self.p {
-                    for qx in 0..self.q {
-                        let mut sum_x = T::ZERO;
-                        let mut sum_y = T::ZERO;
-                        for qy in 0..self.q {
-                            let base = (qy * self.q + qx) * qcomp + comp * 2;
-                            sum_x += self.interp[qy * self.p + py] * u_elem[base];
-                            sum_y += self.grad[qy * self.p + py] * u_elem[base + 1];
-                        }
-                        tmp_grad_x[py * self.q + qx] = sum_x;
-                        tmp_interp_x[py * self.q + qx] = sum_y;
-                    }
+                for qx in 0..self.q {
+                    tensor_contract_strided(
+                        &self.interp,
+                        &u_elem[qx * qcomp + comp * 2..],
+                        self.q * qcomp,
+                        &mut tmp_grad_x[qx..],
+                        self.q,
+                        self.q,
+                        self.p,
+                        true,
+                    );
+                    tensor_contract_strided(
+                        &self.grad,
+                        &u_elem[qx * qcomp + comp * 2 + 1..],
+                        self.q * qcomp,
+                        &mut tmp_interp_x[qx..],
+                        self.q,
+                        self.q,
+                        self.p,
+                        true,
+                    );
                 }
 
                 for py in 0..self.p {
+                    tensor_contract(
+                        &self.grad,
+                        &tmp_grad_x[py * self.q..(py + 1) * self.q],
+                        &mut accum_x[py * self.p..(py + 1) * self.p],
+                        self.q,
+                        self.p,
+                        true,
+                    );
+                    tensor_contract(
+                        &self.interp,
+                        &tmp_interp_x[py * self.q..(py + 1) * self.q],
+                        &mut accum_y[py * self.p..(py + 1) * self.p],
+                        self.q,
+                        self.p,
+                        true,
+                    );
                     for px in 0..self.p {
-                        let mut sum_x = T::ZERO;
-                        let mut sum_y = T::ZERO;
-                        for qx in 0..self.q {
-                            sum_x += self.grad[qx * self.p + px] * tmp_grad_x[py * self.q + qx];
-                            sum_y += self.interp[qx * self.p + px] * tmp_interp_x[py * self.q + qx];
-                        }
                         let dst = comp * pp + py * self.p + px;
-                        accum_x[py * self.p + px] = sum_x;
-                        accum_y[py * self.p + px] = sum_y;
                         v_elem[dst] = accum_x[py * self.p + px] + accum_y[py * self.p + px];
                     }
                 }
             } else {
                 let u_comp = &u_elem[comp * pp..(comp + 1) * pp];
                 for py in 0..self.p {
-                    for qx in 0..self.q {
-                        let mut sum_interp = T::ZERO;
-                        let mut sum_grad = T::ZERO;
-                        for px in 0..self.p {
-                            let value = u_comp[py * self.p + px];
-                            sum_interp += self.interp[qx * self.p + px] * value;
-                            sum_grad += self.grad[qx * self.p + px] * value;
-                        }
-                        tmp_interp_x[py * self.q + qx] = sum_interp;
-                        tmp_grad_x[py * self.q + qx] = sum_grad;
-                    }
+                    let row = &u_comp[py * self.p..(py + 1) * self.p];
+                    tensor_contract(
+                        &self.interp,
+                        row,
+                        &mut tmp_interp_x[py * self.q..(py + 1) * self.q],
+                        self.q,
+                        self.p,
+                        false,
+                    );
+                    tensor_contract(
+                        &self.grad,
+                        row,
+                        &mut tmp_grad_x[py * self.q..(py + 1) * self.q],
+                        self.q,
+                        self.p,
+                        false,
+                    );
                 }
 
-                for qy in 0..self.q {
-                    for qx in 0..self.q {
-                        let mut dx = T::ZERO;
-                        let mut dy = T::ZERO;
-                        for py in 0..self.p {
-                            dx += self.interp[qy * self.p + py] * tmp_grad_x[py * self.q + qx];
-                            dy += self.grad[qy * self.p + py] * tmp_interp_x[py * self.q + qx];
-                        }
-                        let dst = (qy * self.q + qx) * qcomp + comp * 2;
-                        v_elem[dst] = dx;
-                        v_elem[dst + 1] = dy;
-                    }
+                for qx in 0..self.q {
+                    tensor_contract_strided(
+                        &self.interp,
+                        &tmp_grad_x[qx..],
+                        self.q,
+                        &mut v_elem[qx * qcomp + comp * 2..],
+                        self.q * qcomp,
+                        self.q,
+                        self.p,
+                        false,
+                    );
+                    tensor_contract_strided(
+                        &self.grad,
+                        &tmp_interp_x[qx..],
+                        self.q,
+                        &mut v_elem[qx * qcomp + comp * 2 + 1..],
+                        self.q * qcomp,
+                        self.q,
+                        self.p,
+                        false,
+                    );
                 }
             }
         }
@@ -494,6 +539,7 @@ impl<T: Scalar> LagrangeBasis<T> {
                 accum.fill(T::ZERO);
 
                 for direction in 0..3 {
+                    let bx = if direction == 0 { &self.grad } else { &self.interp };
                     for pz in 0..self.p {
                         for qy in 0..self.q {
                             for qx in 0..self.q {
@@ -531,18 +577,16 @@ impl<T: Scalar> LagrangeBasis<T> {
 
                     for pz in 0..self.p {
                         for py in 0..self.p {
-                            for px in 0..self.p {
-                                let mut sum = T::ZERO;
-                                for qx in 0..self.q {
-                                    let bx = if direction == 0 {
-                                        self.grad[qx * self.p + px]
-                                    } else {
-                                        self.interp[qx * self.p + px]
-                                    };
-                                    sum += bx * tmp_x[(pz * self.p + py) * self.q + qx];
-                                }
-                                accum[pz * p2 + py * self.p + px] += sum;
-                            }
+                            let src = (pz * self.p + py) * self.q;
+                            let dst = pz * p2 + py * self.p;
+                            tensor_contract_accumulate(
+                                bx,
+                                &tmp_x[src..src + self.q],
+                                &mut accum[dst..dst + self.p],
+                                self.q,
+                                self.p,
+                                true,
+                            );
                         }
                     }
                 }
@@ -552,55 +596,51 @@ impl<T: Scalar> LagrangeBasis<T> {
             } else {
                 let u_comp = &u_elem[comp * ppp..(comp + 1) * ppp];
                 for direction in 0..3 {
+                    let bx = if direction == 0 { &self.grad } else { &self.interp };
+                    let by = if direction == 1 { &self.grad } else { &self.interp };
+                    let bz = if direction == 2 { &self.grad } else { &self.interp };
                     for pz in 0..self.p {
                         for py in 0..self.p {
-                            for qx in 0..self.q {
-                                let mut sum = T::ZERO;
-                                for px in 0..self.p {
-                                    let bx = if direction == 0 {
-                                        self.grad[qx * self.p + px]
-                                    } else {
-                                        self.interp[qx * self.p + px]
-                                    };
-                                    sum += bx * u_comp[pz * p2 + py * self.p + px];
-                                }
-                                tmp_x[(pz * self.p + py) * self.q + qx] = sum;
-                            }
+                            let src = pz * p2 + py * self.p;
+                            let dst = (pz * self.p + py) * self.q;
+                            tensor_contract(
+                                bx,
+                                &u_comp[src..src + self.p],
+                                &mut tmp_x[dst..dst + self.q],
+                                self.q,
+                                self.p,
+                                false,
+                            );
                         }
                     }
 
                     for pz in 0..self.p {
-                        for qy in 0..self.q {
-                            for qx in 0..self.q {
-                                let mut sum = T::ZERO;
-                                for py in 0..self.p {
-                                    let by = if direction == 1 {
-                                        self.grad[qy * self.p + py]
-                                    } else {
-                                        self.interp[qy * self.p + py]
-                                    };
-                                    sum += by * tmp_x[(pz * self.p + py) * self.q + qx];
-                                }
-                                tmp_y[(pz * q2) + (qy * self.q) + qx] = sum;
-                            }
+                        for qx in 0..self.q {
+                            tensor_contract_strided(
+                                by,
+                                &tmp_x[pz * self.p * self.q + qx..],
+                                self.q,
+                                &mut tmp_y[pz * q2 + qx..],
+                                self.q,
+                                self.q,
+                                self.p,
+                                false,
+                            );
                         }
                     }
 
-                    for qz in 0..self.q {
-                        for qy in 0..self.q {
-                            for qx in 0..self.q {
-                                let mut sum = T::ZERO;
-                                for pz in 0..self.p {
-                                    let bz = if direction == 2 {
-                                        self.grad[qz * self.p + pz]
-                                    } else {
-                                        self.interp[qz * self.p + pz]
-                                    };
-                                    sum += bz * tmp_y[(pz * q2) + (qy * self.q) + qx];
-                                }
-                                let dst = ((qz * q2) + (qy * self.q) + qx) * qcomp + comp * 3 + direction;
-                                v_elem[dst] = sum;
-                            }
+                    for qy in 0..self.q {
+                        for qx in 0..self.q {
+                            tensor_contract_strided(
+                                bz,
+                                &tmp_y[qy * self.q + qx..],
+                                q2,
+                                &mut v_elem[(qy * self.q + qx) * qcomp + comp * 3 + direction..],
+                                q2 * qcomp,
+                                self.q,
+                                self.p,
+                                false,
+                            );
                         }
                     }
                 }
@@ -610,6 +650,23 @@ impl<T: Scalar> LagrangeBasis<T> {
 }
 
 pub fn tensor_contract_strided<T: Scalar>(
+    b: &[T],
+    u: &[T],
+    u_stride: usize,
+    v: &mut [T],
+    v_stride: usize,
+    q: usize,
+    p: usize,
+    transpose: bool,
+) {
+    if try_tensor_contract_simd_f64(b, u, u_stride, v, v_stride, q, p, transpose) {
+        return;
+    }
+
+    tensor_contract_strided_scalar(b, u, u_stride, v, v_stride, q, p, transpose);
+}
+
+fn tensor_contract_strided_scalar<T: Scalar>(
     b: &[T],
     u: &[T],
     u_stride: usize,
@@ -638,6 +695,227 @@ pub fn tensor_contract_strided<T: Scalar>(
     }
 }
 
+#[cfg(target_arch = "x86_64")]
+fn try_tensor_contract_simd_f64<T: Scalar>(
+    b: &[T],
+    u: &[T],
+    u_stride: usize,
+    v: &mut [T],
+    v_stride: usize,
+    q: usize,
+    p: usize,
+    transpose: bool,
+) -> bool {
+    if TypeId::of::<T>() != TypeId::of::<f64>() || u_stride != 1 || v_stride != 1 || p < 4 {
+        return false;
+    }
+
+    if !std::arch::is_x86_feature_detected!("avx2")
+        || !std::arch::is_x86_feature_detected!("fma")
+    {
+        return false;
+    }
+
+    unsafe {
+        let b_f64 = std::slice::from_raw_parts(b.as_ptr().cast::<f64>(), b.len());
+        let u_f64 = std::slice::from_raw_parts(u.as_ptr().cast::<f64>(), u.len());
+        let v_f64 = std::slice::from_raw_parts_mut(v.as_mut_ptr().cast::<f64>(), v.len());
+        tensor_contract_f64_avx2(b_f64, u_f64, v_f64, q, p, transpose);
+    }
+    true
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn try_tensor_contract_simd_f64<T: Scalar>(
+    _b: &[T],
+    _u: &[T],
+    _u_stride: usize,
+    _v: &mut [T],
+    _v_stride: usize,
+    _q: usize,
+    _p: usize,
+    _transpose: bool,
+) -> bool {
+    false
+}
+
+#[cfg(target_arch = "x86_64")]
+fn try_tensor_contract_accumulate_simd_f64<T: Scalar>(
+    b: &[T],
+    u: &[T],
+    u_stride: usize,
+    v: &mut [T],
+    v_stride: usize,
+    q: usize,
+    p: usize,
+    transpose: bool,
+) -> bool {
+    if TypeId::of::<T>() != TypeId::of::<f64>() || u_stride != 1 || v_stride != 1 || p < 4 {
+        return false;
+    }
+
+    if !std::arch::is_x86_feature_detected!("avx2")
+        || !std::arch::is_x86_feature_detected!("fma")
+    {
+        return false;
+    }
+
+    unsafe {
+        let b_f64 = std::slice::from_raw_parts(b.as_ptr().cast::<f64>(), b.len());
+        let u_f64 = std::slice::from_raw_parts(u.as_ptr().cast::<f64>(), u.len());
+        let v_f64 = std::slice::from_raw_parts_mut(v.as_mut_ptr().cast::<f64>(), v.len());
+        tensor_contract_f64_avx2_accumulate(b_f64, u_f64, v_f64, q, p, transpose);
+    }
+    true
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn try_tensor_contract_accumulate_simd_f64<T: Scalar>(
+    _b: &[T],
+    _u: &[T],
+    _u_stride: usize,
+    _v: &mut [T],
+    _v_stride: usize,
+    _q: usize,
+    _p: usize,
+    _transpose: bool,
+) -> bool {
+    false
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2", enable = "fma")]
+unsafe fn tensor_contract_f64_avx2(
+    b: &[f64],
+    u: &[f64],
+    v: &mut [f64],
+    q: usize,
+    p: usize,
+    transpose: bool,
+) {
+    use std::arch::x86_64::{
+        __m128d, __m256d, _mm_add_pd, _mm_cvtsd_f64, _mm_unpackhi_pd, _mm256_add_pd,
+        _mm256_castpd256_pd128, _mm256_extractf128_pd, _mm256_fmadd_pd, _mm256_loadu_pd,
+        _mm256_setzero_pd, _mm256_storeu_pd, _mm256_broadcast_sd,
+    };
+
+    #[inline]
+    unsafe fn hsum_pd(sum: __m256d) -> f64 {
+        let lo = _mm256_castpd256_pd128(sum);
+        let hi = _mm256_extractf128_pd(sum, 1);
+        let pair = _mm_add_pd(lo, hi);
+        let swapped: __m128d = _mm_unpackhi_pd(pair, pair);
+        _mm_cvtsd_f64(_mm_add_pd(pair, swapped))
+    }
+
+    if transpose {
+        let mut pi = 0;
+        while pi + 4 <= p {
+            let mut acc = _mm256_setzero_pd();
+            for qi in 0..q {
+                let coeff = _mm256_broadcast_sd(u.as_ptr().add(qi));
+                let row = _mm256_loadu_pd(b.as_ptr().add(qi * p + pi));
+                acc = _mm256_fmadd_pd(coeff, row, acc);
+            }
+            _mm256_storeu_pd(v.as_mut_ptr().add(pi), acc);
+            pi += 4;
+        }
+        while pi < p {
+            let mut sum = 0.0;
+            for qi in 0..q {
+                sum += b[qi * p + pi] * u[qi];
+            }
+            v[pi] = sum;
+            pi += 1;
+        }
+    } else {
+        for qi in 0..q {
+            let row = b.as_ptr().add(qi * p);
+            let mut acc = _mm256_setzero_pd();
+            let mut pi = 0;
+            while pi + 4 <= p {
+                let row_v = _mm256_loadu_pd(row.add(pi));
+                let u_v = _mm256_loadu_pd(u.as_ptr().add(pi));
+                acc = _mm256_fmadd_pd(row_v, u_v, acc);
+                pi += 4;
+            }
+            let mut sum = hsum_pd(acc);
+            while pi < p {
+                sum += *row.add(pi) * u[pi];
+                pi += 1;
+            }
+            v[qi] = sum;
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2", enable = "fma")]
+unsafe fn tensor_contract_f64_avx2_accumulate(
+    b: &[f64],
+    u: &[f64],
+    v: &mut [f64],
+    q: usize,
+    p: usize,
+    transpose: bool,
+) {
+    use std::arch::x86_64::{
+        __m128d, __m256d, _mm_add_pd, _mm_cvtsd_f64, _mm_unpackhi_pd, _mm256_add_pd,
+        _mm256_castpd256_pd128, _mm256_extractf128_pd, _mm256_fmadd_pd, _mm256_loadu_pd,
+        _mm256_setzero_pd, _mm256_storeu_pd, _mm256_broadcast_sd,
+    };
+
+    #[inline]
+    unsafe fn hsum_pd(sum: __m256d) -> f64 {
+        let lo = _mm256_castpd256_pd128(sum);
+        let hi = _mm256_extractf128_pd(sum, 1);
+        let pair = _mm_add_pd(lo, hi);
+        let swapped: __m128d = _mm_unpackhi_pd(pair, pair);
+        _mm_cvtsd_f64(_mm_add_pd(pair, swapped))
+    }
+
+    if transpose {
+        let mut pi = 0;
+        while pi + 4 <= p {
+            let mut acc = _mm256_setzero_pd();
+            for qi in 0..q {
+                let coeff = _mm256_broadcast_sd(u.as_ptr().add(qi));
+                let row = _mm256_loadu_pd(b.as_ptr().add(qi * p + pi));
+                acc = _mm256_fmadd_pd(coeff, row, acc);
+            }
+            let cur = _mm256_loadu_pd(v.as_ptr().add(pi));
+            _mm256_storeu_pd(v.as_mut_ptr().add(pi), _mm256_add_pd(cur, acc));
+            pi += 4;
+        }
+        while pi < p {
+            let mut sum = 0.0;
+            for qi in 0..q {
+                sum += b[qi * p + pi] * u[qi];
+            }
+            v[pi] += sum;
+            pi += 1;
+        }
+    } else {
+        for qi in 0..q {
+            let row = b.as_ptr().add(qi * p);
+            let mut acc = _mm256_setzero_pd();
+            let mut pi = 0;
+            while pi + 4 <= p {
+                let row_v = _mm256_loadu_pd(row.add(pi));
+                let u_v = _mm256_loadu_pd(u.as_ptr().add(pi));
+                acc = _mm256_fmadd_pd(row_v, u_v, acc);
+                pi += 4;
+            }
+            let mut sum = hsum_pd(acc);
+            while pi < p {
+                sum += *row.add(pi) * u[pi];
+                pi += 1;
+            }
+            v[qi] += sum;
+        }
+    }
+}
+
 pub fn tensor_contract<T: Scalar>(
     b: &[T],
     u: &[T],
@@ -647,6 +925,50 @@ pub fn tensor_contract<T: Scalar>(
     transpose: bool,
 ) {
     tensor_contract_strided(b, u, 1, v, 1, q, p, transpose);
+}
+
+pub fn tensor_contract_accumulate_strided<T: Scalar>(
+    b: &[T],
+    u: &[T],
+    u_stride: usize,
+    v: &mut [T],
+    v_stride: usize,
+    q: usize,
+    p: usize,
+    transpose: bool,
+) {
+    if try_tensor_contract_accumulate_simd_f64(b, u, u_stride, v, v_stride, q, p, transpose) {
+        return;
+    }
+
+    if transpose {
+        for pi in 0..p {
+            let mut sum = T::ZERO;
+            for qi in 0..q {
+                sum += b[qi * p + pi] * u[qi * u_stride];
+            }
+            v[pi * v_stride] += sum;
+        }
+    } else {
+        for qi in 0..q {
+            let mut sum = T::ZERO;
+            for pi in 0..p {
+                sum += b[qi * p + pi] * u[pi * u_stride];
+            }
+            v[qi * v_stride] += sum;
+        }
+    }
+}
+
+pub fn tensor_contract_accumulate<T: Scalar>(
+    b: &[T],
+    u: &[T],
+    v: &mut [T],
+    q: usize,
+    p: usize,
+    transpose: bool,
+) {
+    tensor_contract_accumulate_strided(b, u, 1, v, 1, q, p, transpose);
 }
 
 fn to_scalar<T: Scalar>(value: f64) -> ReedResult<T> {
@@ -1058,5 +1380,32 @@ mod tests {
         for (got, want) in v.iter().zip(expected.iter()) {
             assert!((got - want).abs() < 1.0e-12);
         }
+    }
+
+    #[test]
+    fn test_tensor_contract_strided_matches_dense_reference() {
+        let basis: [f64; 12] = [
+            1.0_f64, 2.0_f64, 3.0_f64, 4.0_f64,
+            5.0_f64, 6.0_f64, 7.0_f64, 8.0_f64,
+            9.0_f64, 10.0_f64, 11.0_f64, 12.0_f64,
+        ];
+        let u: [f64; 8] = [2.0_f64, -99.0_f64, -1.0_f64, -99.0_f64, 0.5_f64, -99.0_f64, 3.0_f64, -99.0_f64];
+        let mut v: [f64; 6] = [0.0_f64; 6];
+
+        tensor_contract_strided(&basis, &u, 2, &mut v, 2, 3, 4, false);
+
+        assert!((v[0] - 13.5_f64).abs() < 1.0e-12);
+        assert!((v[2] - 31.5_f64).abs() < 1.0e-12);
+        assert!((v[4] - 49.5_f64).abs() < 1.0e-12);
+
+        let u_t: [f64; 6] = [1.0_f64, -99.0_f64, -2.0_f64, -99.0_f64, 0.5_f64, -99.0_f64];
+        let mut v_t: [f64; 8] = [0.0_f64; 8];
+
+        tensor_contract_strided(&basis, &u_t, 2, &mut v_t, 2, 3, 4, true);
+
+        assert!((v_t[0] + 4.5_f64).abs() < 1.0e-12);
+        assert!((v_t[2] + 5.0_f64).abs() < 1.0e-12);
+        assert!((v_t[4] + 5.5_f64).abs() < 1.0e-12);
+        assert!((v_t[6] + 6.0_f64).abs() < 1.0e-12);
     }
 }
