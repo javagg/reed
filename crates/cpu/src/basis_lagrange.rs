@@ -233,23 +233,21 @@ impl<T: Scalar> LagrangeBasis<T> {
 
     fn apply_interp_elem_1d(&self, transpose: bool, u_elem: &[T], v_elem: &mut [T]) {
         for comp in 0..self.ncomp {
-            if transpose {
-                for px in 0..self.p {
-                    let mut sum = T::ZERO;
-                    for qx in 0..self.q {
-                        sum += self.interp[qx * self.p + px] * u_elem[qx * self.ncomp + comp];
-                    }
-                    v_elem[comp * self.p + px] = sum;
-                }
+            let (u_offset, u_stride, v_offset, v_stride) = if transpose {
+                (comp, self.ncomp, comp * self.p, 1)
             } else {
-                for qx in 0..self.q {
-                    let mut sum = T::ZERO;
-                    for px in 0..self.p {
-                        sum += self.interp[qx * self.p + px] * u_elem[comp * self.p + px];
-                    }
-                    v_elem[qx * self.ncomp + comp] = sum;
-                }
-            }
+                (comp * self.p, 1, comp, self.ncomp)
+            };
+            tensor_contract_strided(
+                &self.interp,
+                &u_elem[u_offset..],
+                u_stride,
+                &mut v_elem[v_offset..],
+                v_stride,
+                self.q,
+                self.p,
+                transpose,
+            );
         }
     }
 
@@ -392,23 +390,21 @@ impl<T: Scalar> LagrangeBasis<T> {
 
     fn apply_grad_elem_1d(&self, transpose: bool, u_elem: &[T], v_elem: &mut [T]) {
         for comp in 0..self.ncomp {
-            if transpose {
-                for px in 0..self.p {
-                    let mut sum = T::ZERO;
-                    for qx in 0..self.q {
-                        sum += self.grad[qx * self.p + px] * u_elem[qx * self.ncomp + comp];
-                    }
-                    v_elem[comp * self.p + px] = sum;
-                }
+            let (u_offset, u_stride, v_offset, v_stride) = if transpose {
+                (comp, self.ncomp, comp * self.p, 1)
             } else {
-                for qx in 0..self.q {
-                    let mut sum = T::ZERO;
-                    for px in 0..self.p {
-                        sum += self.grad[qx * self.p + px] * u_elem[comp * self.p + px];
-                    }
-                    v_elem[qx * self.ncomp + comp] = sum;
-                }
-            }
+                (comp * self.p, 1, comp, self.ncomp)
+            };
+            tensor_contract_strided(
+                &self.grad,
+                &u_elem[u_offset..],
+                u_stride,
+                &mut v_elem[v_offset..],
+                v_stride,
+                self.q,
+                self.p,
+                transpose,
+            );
         }
     }
 
@@ -613,10 +609,12 @@ impl<T: Scalar> LagrangeBasis<T> {
     }
 }
 
-pub fn tensor_contract<T: Scalar>(
+pub fn tensor_contract_strided<T: Scalar>(
     b: &[T],
     u: &[T],
+    u_stride: usize,
     v: &mut [T],
+    v_stride: usize,
     q: usize,
     p: usize,
     transpose: bool,
@@ -625,19 +623,30 @@ pub fn tensor_contract<T: Scalar>(
         for pi in 0..p {
             let mut sum = T::ZERO;
             for qi in 0..q {
-                sum += b[qi * p + pi] * u[qi];
+                sum += b[qi * p + pi] * u[qi * u_stride];
             }
-            v[pi] = sum;
+            v[pi * v_stride] = sum;
         }
     } else {
         for qi in 0..q {
             let mut sum = T::ZERO;
             for pi in 0..p {
-                sum += b[qi * p + pi] * u[pi];
+                sum += b[qi * p + pi] * u[pi * u_stride];
             }
-            v[qi] = sum;
+            v[qi * v_stride] = sum;
         }
     }
+}
+
+pub fn tensor_contract<T: Scalar>(
+    b: &[T],
+    u: &[T],
+    v: &mut [T],
+    q: usize,
+    p: usize,
+    transpose: bool,
+) {
+    tensor_contract_strided(b, u, 1, v, 1, q, p, transpose);
 }
 
 fn to_scalar<T: Scalar>(value: f64) -> ReedResult<T> {

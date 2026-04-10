@@ -1,10 +1,19 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use reed::{FieldVector, OperatorTrait, QuadMode, Reed};
+use reed::{EvalMode, FieldVector, OperatorTrait, QuadMode, Reed};
 
 struct ApplyScenario {
     input: &'static dyn reed::VectorTrait<f64>,
     output: &'static mut dyn reed::VectorTrait<f64>,
     operator: Box<dyn OperatorTrait<f64>>,
+}
+
+struct BasisApplyScenario {
+    basis: Box<dyn reed::BasisTrait<f64>>,
+    input: Vec<f64>,
+    output: Vec<f64>,
+    num_elem: usize,
+    transpose: bool,
+    eval_mode: EvalMode,
 }
 
 fn leak_box<T>(value: T) -> &'static mut T {
@@ -106,6 +115,50 @@ fn build_poisson_qdata_1d(node_coords: &[f64], qweights: &[f64], nelem: usize, p
         }
     }
     qdata
+}
+
+fn build_basis_data(len: usize) -> Vec<f64> {
+    (0..len)
+        .map(|index| ((index % 19) as f64 - 9.0) * 0.125)
+        .collect()
+}
+
+fn build_basis_apply(
+    dim: usize,
+    ncomp: usize,
+    p: usize,
+    q: usize,
+    num_elem: usize,
+    transpose: bool,
+    eval_mode: EvalMode,
+) -> BasisApplyScenario {
+    let reed = Reed::<f64>::init("/cpu/self").unwrap();
+    let basis = reed
+        .basis_tensor_h1_lagrange(dim, ncomp, p, q, QuadMode::Gauss)
+        .unwrap();
+    let qcomp = match eval_mode {
+        EvalMode::Grad => ncomp * dim,
+        _ => ncomp,
+    };
+    let input_len = if transpose {
+        num_elem * basis.num_qpoints() * qcomp
+    } else {
+        num_elem * basis.num_dof() * ncomp
+    };
+    let output_len = if transpose {
+        num_elem * basis.num_dof() * ncomp
+    } else {
+        num_elem * basis.num_qpoints() * qcomp
+    };
+
+    BasisApplyScenario {
+        basis,
+        input: build_basis_data(input_len),
+        output: vec![0.0; output_len],
+        num_elem,
+        transpose,
+        eval_mode,
+    }
 }
 
 fn build_poisson_apply(dim: usize, nelem_1d: usize, p: usize, q: usize) -> ApplyScenario {
@@ -447,5 +500,38 @@ fn bench_combined_apply(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(benches, bench_poisson_apply, bench_combined_apply);
+fn bench_basis_apply(c: &mut Criterion) {
+    let mut group = c.benchmark_group("cpu_basis_apply");
+    for &(dim, num_elem, p, q) in &[(1, 8192, 8, 10), (2, 1024, 4, 6), (3, 256, 4, 6)] {
+        for &(eval_mode, transpose, label) in &[
+            (EvalMode::Interp, false, "interp"),
+            (EvalMode::Interp, true, "interp_t"),
+            (EvalMode::Grad, false, "grad"),
+            (EvalMode::Grad, true, "grad_t"),
+        ] {
+            let mut scenario = build_basis_apply(dim, 1, p, q, num_elem, transpose, eval_mode);
+            group.bench_with_input(
+                BenchmarkId::new(label, format!("dim{dim}_elem{num_elem}_p{p}_q{q}")),
+                &(dim, num_elem, p, q, transpose),
+                |b, _| {
+                    b.iter(|| {
+                        scenario
+                            .basis
+                            .apply(
+                                scenario.num_elem,
+                                scenario.transpose,
+                                scenario.eval_mode,
+                                black_box(scenario.input.as_slice()),
+                                black_box(scenario.output.as_mut_slice()),
+                            )
+                            .unwrap();
+                    });
+                },
+            );
+        }
+    }
+    group.finish();
+}
+
+criterion_group!(benches, bench_poisson_apply, bench_combined_apply, bench_basis_apply);
 criterion_main!(benches);
