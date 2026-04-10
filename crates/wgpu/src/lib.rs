@@ -44,6 +44,14 @@ pub trait Backend<T: Scalar>: Send + Sync {
         q: usize,
         qmode: QuadMode,
     ) -> ReedResult<Box<dyn BasisTrait<T>>>;
+
+    fn create_basis_h1_simplex(
+        &self,
+        topo: ElemTopology,
+        poly: usize,
+        ncomp: usize,
+        q: usize,
+    ) -> ReedResult<Box<dyn BasisTrait<T>>>;
 }
 
 /// WASM variant — wgpu::Device is not Send+Sync in browser.
@@ -79,6 +87,14 @@ pub trait Backend<T: Scalar> {
         p: usize,
         q: usize,
         qmode: QuadMode,
+    ) -> ReedResult<Box<dyn BasisTrait<T>>>;
+
+    fn create_basis_h1_simplex(
+        &self,
+        topo: ElemTopology,
+        poly: usize,
+        ncomp: usize,
+        q: usize,
     ) -> ReedResult<Box<dyn BasisTrait<T>>>;
 }
 
@@ -226,6 +242,16 @@ impl<T: Scalar> reed_core::Backend<T> for WgpuBackend<T> {
     ) -> reed_core::ReedResult<Box<dyn reed_core::BasisTrait<T>>> {
         Backend::<T>::create_basis_tensor_h1_lagrange(self, dim, ncomp, p, q, qmode)
     }
+
+    fn create_basis_h1_simplex(
+        &self,
+        topo: ElemTopology,
+        poly: usize,
+        ncomp: usize,
+        q: usize,
+    ) -> reed_core::ReedResult<Box<dyn reed_core::BasisTrait<T>>> {
+        Backend::<T>::create_basis_h1_simplex(self, topo, poly, ncomp, q)
+    }
 }
 
 /// Non-WASM impl: WgpuBackend implements reed_wgpu::Backend with Send+Sync bounds.
@@ -297,6 +323,16 @@ impl<T: Scalar> Backend<T> for WgpuBackend<T> {
             self.runtime.clone(),
         )?))
     }
+
+    fn create_basis_h1_simplex(
+        &self,
+        topo: ElemTopology,
+        poly: usize,
+        ncomp: usize,
+        q: usize,
+    ) -> ReedResult<Box<dyn BasisTrait<T>>> {
+        reed_core::Backend::create_basis_h1_simplex(&self.cpu_backend, topo, poly, ncomp, q)
+    }
 }
 
 /// WASM-only impl: on WASM, basis creation falls back to CPU since GPU basis is unavailable.
@@ -363,6 +399,16 @@ impl<T: Scalar> reed_core::Backend<T> for WgpuBackend<T> {
         // On WASM, WgpuBasis doesn't implement BasisTrait (GPU runtime is not Send+Sync).
         // Fall back to CPU LagrangeBasis for basis evaluation.
         reed_core::Backend::create_basis_tensor_h1_lagrange(&self.cpu_backend, dim, ncomp, p, q, qmode)
+    }
+
+    fn create_basis_h1_simplex(
+        &self,
+        topo: ElemTopology,
+        poly: usize,
+        ncomp: usize,
+        q: usize,
+    ) -> ReedResult<Box<dyn BasisTrait<T>>> {
+        reed_core::Backend::create_basis_h1_simplex(&self.cpu_backend, topo, poly, ncomp, q)
     }
 }
 

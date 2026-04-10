@@ -48,6 +48,9 @@ use reed_core::{
     scalar::Scalar,
 };
 
+#[cfg(feature = "parallel")]
+const PAR_MIN_ELEMS_PER_TASK: usize = 128;
+
 // ── SimplexBasis ──────────────────────────────────────────────────────────────
 
 /// H1 Lagrange basis on triangle or tetrahedron reference elements.
@@ -265,10 +268,19 @@ impl<T: Scalar> BasisTrait<T> for SimplexBasis<T> {
                 check_sizes(u, in_stride * num_elem, v, out_stride * num_elem, "interp")?;
                 // zero output for accumulation in transpose path
                 if transpose { v.fill(T::ZERO); }
-                for elem in 0..num_elem {
-                    let u_elem = &u[elem * in_stride..(elem + 1) * in_stride];
-                    let v_elem = &mut v[elem * out_stride..(elem + 1) * out_stride];
-                    self.apply_interp_elem(transpose, u_elem, v_elem);
+                #[cfg(feature = "parallel")]
+                {
+                    use rayon::prelude::*;
+                    u.par_chunks(in_stride)
+                        .zip(v.par_chunks_mut(out_stride))
+                        .with_min_len(PAR_MIN_ELEMS_PER_TASK)
+                        .for_each(|(u_elem, v_elem)| self.apply_interp_elem(transpose, u_elem, v_elem));
+                }
+                #[cfg(not(feature = "parallel"))]
+                {
+                    for (u_elem, v_elem) in u.chunks(in_stride).zip(v.chunks_mut(out_stride)) {
+                        self.apply_interp_elem(transpose, u_elem, v_elem);
+                    }
                 }
             }
             EvalMode::Grad => {
@@ -285,10 +297,19 @@ impl<T: Scalar> BasisTrait<T> for SimplexBasis<T> {
                 };
                 check_sizes(u, in_stride * num_elem, v, out_stride * num_elem, "grad")?;
                 if transpose { v.fill(T::ZERO); }
-                for elem in 0..num_elem {
-                    let u_elem = &u[elem * in_stride..(elem + 1) * in_stride];
-                    let v_elem = &mut v[elem * out_stride..(elem + 1) * out_stride];
-                    self.apply_grad_elem(transpose, u_elem, v_elem);
+                #[cfg(feature = "parallel")]
+                {
+                    use rayon::prelude::*;
+                    u.par_chunks(in_stride)
+                        .zip(v.par_chunks_mut(out_stride))
+                        .with_min_len(PAR_MIN_ELEMS_PER_TASK)
+                        .for_each(|(u_elem, v_elem)| self.apply_grad_elem(transpose, u_elem, v_elem));
+                }
+                #[cfg(not(feature = "parallel"))]
+                {
+                    for (u_elem, v_elem) in u.chunks(in_stride).zip(v.chunks_mut(out_stride)) {
+                        self.apply_grad_elem(transpose, u_elem, v_elem);
+                    }
                 }
             }
             EvalMode::Weight => {
@@ -304,9 +325,18 @@ impl<T: Scalar> BasisTrait<T> for SimplexBasis<T> {
                         num_elem * self.num_qpoints
                     )));
                 }
-                for elem in 0..num_elem {
-                    let off = elem * self.num_qpoints;
-                    v[off..off + self.num_qpoints].copy_from_slice(&self.weights);
+                #[cfg(feature = "parallel")]
+                {
+                    use rayon::prelude::*;
+                    v.par_chunks_mut(self.num_qpoints)
+                        .with_min_len(PAR_MIN_ELEMS_PER_TASK)
+                        .for_each(|v_elem| v_elem.copy_from_slice(&self.weights));
+                }
+                #[cfg(not(feature = "parallel"))]
+                {
+                    for v_elem in v.chunks_mut(self.num_qpoints) {
+                        v_elem.copy_from_slice(&self.weights);
+                    }
                 }
             }
             other => {

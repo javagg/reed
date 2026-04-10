@@ -69,6 +69,16 @@ impl reed_core::Backend<f64> for WgpuBackendWrap {
     ) -> reed_core::ReedResult<Box<dyn reed_core::BasisTrait<f64>>> {
         reed_core::Backend::<f64>::create_basis_tensor_h1_lagrange(&*self.0, dim, ncomp, p, q, qmode)
     }
+
+    fn create_basis_h1_simplex(
+        &self,
+        topo: reed_core::enums::ElemTopology,
+        poly: usize,
+        ncomp: usize,
+        q: usize,
+    ) -> reed_core::ReedResult<Box<dyn reed_core::BasisTrait<f64>>> {
+        reed_core::Backend::<f64>::create_basis_h1_simplex(&*self.0, topo, poly, ncomp, q)
+    }
 }
 
 #[cfg(feature = "wasm-gpu")]

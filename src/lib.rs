@@ -1,5 +1,5 @@
 pub use reed_core::{
-    Backend, BasisTrait, ClosureQFunction, ElemRestrictionTrait, EvalMode,
+    Backend, BasisTrait, ClosureQFunction, ElemRestrictionTrait, ElemTopology, EvalMode,
     OperatorTrait, QFunctionClosure, QFunctionField, QFunctionTrait, QuadMode, ReedError,
     ReedResult, Scalar, TransposeMode, VectorTrait,
 };
@@ -91,6 +91,16 @@ impl<T: Scalar> Reed<T> {
         qmode: QuadMode,
     ) -> ReedResult<Box<dyn BasisTrait<T>>> {
         self.inner.basis_tensor_h1_lagrange(dim, ncomp, p, q, qmode)
+    }
+
+    pub fn basis_h1_simplex(
+        &self,
+        topo: ElemTopology,
+        poly: usize,
+        ncomp: usize,
+        q: usize,
+    ) -> ReedResult<Box<dyn BasisTrait<T>>> {
+        self.inner.basis_h1_simplex(topo, poly, ncomp, q)
     }
 
     pub fn operator_builder<'a>(&'a self) -> OperatorBuilder<'a, T> {

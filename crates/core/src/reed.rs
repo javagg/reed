@@ -83,8 +83,8 @@ pub trait Backend<T: Scalar> {
     fn create_strided_elem_restriction(
         &self,
         nelem: usize,
-        ncomp: usize,
         elemsize: usize,
+        ncomp: usize,
         lsize: usize,
         strides: [i32; 3],
     ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>>;
@@ -96,6 +96,14 @@ pub trait Backend<T: Scalar> {
         p: usize,
         q: usize,
         qmode: QuadMode,
+    ) -> ReedResult<Box<dyn BasisTrait<T>>>;
+
+    fn create_basis_h1_simplex(
+        &self,
+        topo: ElemTopology,
+        poly: usize,
+        ncomp: usize,
+        q: usize,
     ) -> ReedResult<Box<dyn BasisTrait<T>>>;
 }
 

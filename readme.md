@@ -45,6 +45,25 @@ cargo run --example poisson -- --dim 2 --nelem 4 --p 2 --q 4
 cargo run --example poisson -- --dim 3 --nelem 4 --p 2 --q 4
 ```
 
+## CPU benchmarks
+
+Criterion benchmarks are available at the workspace root and focus on the CPU backend hot path.
+
+```bash
+cargo bench --bench cpu_backend
+```
+
+To compare parallel vs. serial CPU backend builds with the same benchmark harness:
+
+```bash
+./scripts/bench_cpu_compare.sh
+```
+
+Current benchmark groups:
+
+- `cpu_poisson_apply`
+- `cpu_combined_apply`
+
 ## WASM compile
 
 CPU backend can be compiled for `wasm32-unknown-unknown`.

@@ -3,6 +3,9 @@ use reed_core::{
     scalar::Scalar, ReedError,
 };
 
+#[cfg(feature = "parallel")]
+const PAR_MIN_ELEMS_PER_TASK: usize = 128;
+
 #[derive(Clone)]
 enum RestrictionLayout {
     Offset {
@@ -70,44 +73,76 @@ impl<T: Scalar> CpuElemRestriction<T> {
         })
     }
 
-    fn global_index(&self, elem: usize, comp: usize, local: usize) -> ReedResult<usize> {
-        let idx = match &self.layout {
-            RestrictionLayout::Offset {
-                offsets,
-                compstride,
-            } => {
-                let base = offsets[elem * self.elemsize + local];
-                if base < 0 {
-                    return Err(ReedError::ElemRestriction(format!(
-                        "negative offset {} at element {}, local {}",
-                        base, elem, local
-                    )));
-                }
-                base as usize + comp * *compstride
-            }
-            RestrictionLayout::Strided { strides } => {
-                let index =
-                    local as i32 * strides[0] + comp as i32 * strides[1] + elem as i32 * strides[2];
-                if index < 0 {
-                    return Err(ReedError::ElemRestriction(format!(
-                        "negative strided index {} at element {}, comp {}, local {}",
-                        index, elem, comp, local
-                    )));
-                }
-                index as usize
-            }
-        };
-        if idx >= self.lsize {
-            return Err(ReedError::ElemRestriction(format!(
-                "global index {} out of bounds for lsize {}",
-                idx, self.lsize
-            )));
-        }
-        Ok(idx)
-    }
-
     fn local_index(&self, elem: usize, comp: usize, local: usize) -> usize {
         ((elem * self.ncomp + comp) * self.elemsize) + local
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    fn transpose_offset_serial(
+        &self,
+        offsets: &[i32],
+        compstride: usize,
+        u: &[T],
+        v: &mut [T],
+    ) -> ReedResult<()> {
+        for elem in 0..self.nelem {
+            let elem_offsets = &offsets[elem * self.elemsize..(elem + 1) * self.elemsize];
+            for comp in 0..self.ncomp {
+                let comp_base = comp * compstride;
+                for (local, &base) in elem_offsets.iter().enumerate() {
+                    if base < 0 {
+                        return Err(ReedError::ElemRestriction(format!(
+                            "negative offset {} at element {}, local {}",
+                            base, elem, local
+                        )));
+                    }
+                    let g = base as usize + comp_base;
+                    if g >= self.lsize {
+                        return Err(ReedError::ElemRestriction(format!(
+                            "global index {} out of bounds for lsize {}",
+                            g, self.lsize
+                        )));
+                    }
+                    let l = self.local_index(elem, comp, local);
+                    v[g] += u[l];
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[cfg(not(feature = "parallel"))]
+    fn transpose_strided_serial(
+        &self,
+        strides: [i32; 3],
+        u: &[T],
+        v: &mut [T],
+    ) -> ReedResult<()> {
+        for elem in 0..self.nelem {
+            for comp in 0..self.ncomp {
+                for local in 0..self.elemsize {
+                    let index = local as i32 * strides[0]
+                        + comp as i32 * strides[1]
+                        + elem as i32 * strides[2];
+                    if index < 0 {
+                        return Err(ReedError::ElemRestriction(format!(
+                            "negative strided index {} at element {}, comp {}, local {}",
+                            index, elem, comp, local
+                        )));
+                    }
+                    let g = index as usize;
+                    if g >= self.lsize {
+                        return Err(ReedError::ElemRestriction(format!(
+                            "global index {} out of bounds for lsize {}",
+                            g, self.lsize
+                        )));
+                    }
+                    let l = self.local_index(elem, comp, local);
+                    v[g] += u[l];
+                }
+            }
+        }
+        Ok(())
     }
 }
 
@@ -146,12 +181,133 @@ impl<T: Scalar> ElemRestrictionTrait<T> for CpuElemRestriction<T> {
                         local_size
                     )));
                 }
-                for elem in 0..self.nelem {
-                    for comp in 0..self.ncomp {
-                        for local in 0..self.elemsize {
-                            let g = self.global_index(elem, comp, local)?;
-                            let l = self.local_index(elem, comp, local);
-                            v[l] = u[g];
+                match &self.layout {
+                    RestrictionLayout::Offset {
+                        offsets,
+                        compstride,
+                    } => {
+                        #[cfg(feature = "parallel")]
+                        {
+                            use rayon::prelude::*;
+                            let elem_chunk = self.ncomp * self.elemsize;
+                            v.par_chunks_mut(elem_chunk).enumerate().try_for_each(
+                                |(elem, v_elem)| -> ReedResult<()> {
+                                    let elem_offsets =
+                                        &offsets[elem * self.elemsize..(elem + 1) * self.elemsize];
+                                    for comp in 0..self.ncomp {
+                                        let comp_base = comp * *compstride;
+                                        let v_comp =
+                                            &mut v_elem[comp * self.elemsize..(comp + 1) * self.elemsize];
+                                        for (local, dst) in v_comp.iter_mut().enumerate() {
+                                            let base = elem_offsets[local];
+                                            if base < 0 {
+                                                return Err(ReedError::ElemRestriction(format!(
+                                                    "negative offset {} at element {}, local {}",
+                                                    base, elem, local
+                                                )));
+                                            }
+                                            let g = base as usize + comp_base;
+                                            if g >= self.lsize {
+                                                return Err(ReedError::ElemRestriction(format!(
+                                                    "global index {} out of bounds for lsize {}",
+                                                    g, self.lsize
+                                                )));
+                                            }
+                                            *dst = u[g];
+                                        }
+                                    }
+                                    Ok(())
+                                },
+                            )?;
+                        }
+                        #[cfg(not(feature = "parallel"))]
+                        {
+                            for elem in 0..self.nelem {
+                                let elem_offsets =
+                                    &offsets[elem * self.elemsize..(elem + 1) * self.elemsize];
+                                for comp in 0..self.ncomp {
+                                    let comp_base = comp * *compstride;
+                                    for (local, &base) in elem_offsets.iter().enumerate() {
+                                        if base < 0 {
+                                            return Err(ReedError::ElemRestriction(format!(
+                                                "negative offset {} at element {}, local {}",
+                                                base, elem, local
+                                            )));
+                                        }
+                                        let g = base as usize + comp_base;
+                                        if g >= self.lsize {
+                                            return Err(ReedError::ElemRestriction(format!(
+                                                "global index {} out of bounds for lsize {}",
+                                                g, self.lsize
+                                            )));
+                                        }
+                                        let l = self.local_index(elem, comp, local);
+                                        v[l] = u[g];
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    RestrictionLayout::Strided { strides } => {
+                        #[cfg(feature = "parallel")]
+                        {
+                            use rayon::prelude::*;
+                            let elem_chunk = self.ncomp * self.elemsize;
+                            v.par_chunks_mut(elem_chunk).enumerate().try_for_each(
+                                |(elem, v_elem)| -> ReedResult<()> {
+                                    for comp in 0..self.ncomp {
+                                        let v_comp =
+                                            &mut v_elem[comp * self.elemsize..(comp + 1) * self.elemsize];
+                                        for (local, dst) in v_comp.iter_mut().enumerate() {
+                                            let index = local as i32 * strides[0]
+                                                + comp as i32 * strides[1]
+                                                + elem as i32 * strides[2];
+                                            if index < 0 {
+                                                return Err(ReedError::ElemRestriction(format!(
+                                                    "negative strided index {} at element {}, comp {}, local {}",
+                                                    index, elem, comp, local
+                                                )));
+                                            }
+                                            let g = index as usize;
+                                            if g >= self.lsize {
+                                                return Err(ReedError::ElemRestriction(format!(
+                                                    "global index {} out of bounds for lsize {}",
+                                                    g, self.lsize
+                                                )));
+                                            }
+                                            *dst = u[g];
+                                        }
+                                    }
+                                    Ok(())
+                                },
+                            )?;
+                        }
+                        #[cfg(not(feature = "parallel"))]
+                        {
+                            for elem in 0..self.nelem {
+                                for comp in 0..self.ncomp {
+                                    for local in 0..self.elemsize {
+                                        let index = local as i32 * strides[0]
+                                            + comp as i32 * strides[1]
+                                            + elem as i32 * strides[2];
+                                        if index < 0 {
+                                            return Err(ReedError::ElemRestriction(format!(
+                                                "negative strided index {} at element {}, comp {}, local {}",
+                                                index, elem, comp, local
+                                            )));
+                                        }
+                                        let g = index as usize;
+                                        if g >= self.lsize {
+                                            return Err(ReedError::ElemRestriction(format!(
+                                                "global index {} out of bounds for lsize {}",
+                                                g, self.lsize
+                                            )));
+                                        }
+                                        let l = self.local_index(elem, comp, local);
+                                        v[l] = u[g];
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -171,12 +327,114 @@ impl<T: Scalar> ElemRestrictionTrait<T> for CpuElemRestriction<T> {
                         self.lsize
                     )));
                 }
-                for elem in 0..self.nelem {
-                    for comp in 0..self.ncomp {
-                        for local in 0..self.elemsize {
-                            let g = self.global_index(elem, comp, local)?;
-                            let l = self.local_index(elem, comp, local);
-                            v[g] += u[l];
+                match &self.layout {
+                    RestrictionLayout::Offset {
+                        offsets,
+                        compstride,
+                    } => {
+                        #[cfg(feature = "parallel")]
+                        {
+                            use rayon::prelude::*;
+                            let accum = (0..self.nelem)
+                                .into_par_iter()
+                                .with_min_len(PAR_MIN_ELEMS_PER_TASK)
+                                .try_fold(
+                                    || vec![T::ZERO; self.lsize],
+                                    |mut partial, elem| -> ReedResult<Vec<T>> {
+                                        let elem_offsets = &offsets
+                                            [elem * self.elemsize..(elem + 1) * self.elemsize];
+                                        for comp in 0..self.ncomp {
+                                            let comp_base = comp * *compstride;
+                                            for (local, &base) in elem_offsets.iter().enumerate() {
+                                                if base < 0 {
+                                                    return Err(ReedError::ElemRestriction(format!(
+                                                        "negative offset {} at element {}, local {}",
+                                                        base, elem, local
+                                                    )));
+                                                }
+                                                let g = base as usize + comp_base;
+                                                if g >= self.lsize {
+                                                    return Err(ReedError::ElemRestriction(format!(
+                                                        "global index {} out of bounds for lsize {}",
+                                                        g, self.lsize
+                                                    )));
+                                                }
+                                                let l = self.local_index(elem, comp, local);
+                                                partial[g] += u[l];
+                                            }
+                                        }
+                                        Ok(partial)
+                                    },
+                                )
+                                .try_reduce(
+                                    || vec![T::ZERO; self.lsize],
+                                    |mut left, right| -> ReedResult<Vec<T>> {
+                                        for (dst, src) in left.iter_mut().zip(right.into_iter()) {
+                                            *dst += src;
+                                        }
+                                        Ok(left)
+                                    },
+                                )?;
+                            for (dst, src) in v.iter_mut().zip(accum.into_iter()) {
+                                *dst += src;
+                            }
+                        }
+                        #[cfg(not(feature = "parallel"))]
+                        {
+                            self.transpose_offset_serial(offsets, *compstride, u, v)?;
+                        }
+                    }
+                    RestrictionLayout::Strided { strides } => {
+                        #[cfg(feature = "parallel")]
+                        {
+                            use rayon::prelude::*;
+                            let accum = (0..self.nelem)
+                                .into_par_iter()
+                                .with_min_len(PAR_MIN_ELEMS_PER_TASK)
+                                .try_fold(
+                                    || vec![T::ZERO; self.lsize],
+                                    |mut partial, elem| -> ReedResult<Vec<T>> {
+                                        for comp in 0..self.ncomp {
+                                            for local in 0..self.elemsize {
+                                                let index = local as i32 * strides[0]
+                                                    + comp as i32 * strides[1]
+                                                    + elem as i32 * strides[2];
+                                                if index < 0 {
+                                                    return Err(ReedError::ElemRestriction(format!(
+                                                        "negative strided index {} at element {}, comp {}, local {}",
+                                                        index, elem, comp, local
+                                                    )));
+                                                }
+                                                let g = index as usize;
+                                                if g >= self.lsize {
+                                                    return Err(ReedError::ElemRestriction(format!(
+                                                        "global index {} out of bounds for lsize {}",
+                                                        g, self.lsize
+                                                    )));
+                                                }
+                                                let l = self.local_index(elem, comp, local);
+                                                partial[g] += u[l];
+                                            }
+                                        }
+                                        Ok(partial)
+                                    },
+                                )
+                                .try_reduce(
+                                    || vec![T::ZERO; self.lsize],
+                                    |mut left, right| -> ReedResult<Vec<T>> {
+                                        for (dst, src) in left.iter_mut().zip(right.into_iter()) {
+                                            *dst += src;
+                                        }
+                                        Ok(left)
+                                    },
+                                )?;
+                            for (dst, src) in v.iter_mut().zip(accum.into_iter()) {
+                                *dst += src;
+                            }
+                        }
+                        #[cfg(not(feature = "parallel"))]
+                        {
+                            self.transpose_strided_serial(*strides, u, v)?;
                         }
                     }
                 }

@@ -23,7 +23,19 @@ reed-core = { path = "crates/core" }
 reed-cpu = { path = "crates/cpu", default-features = false }
 reed-wgpu = { path = "crates/wgpu", optional = true }
 
+[dev-dependencies]
+criterion = "0.5"
+
 [features]
 default = ["parallel"]
 parallel = ["reed-cpu/parallel"]
 wgpu-backend = ["dep:reed-wgpu"]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+
+[[bench]]
+name = "cpu_backend"
+harness = false

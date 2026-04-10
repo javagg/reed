@@ -9,6 +9,7 @@ use reed_core::{
     vector::VectorTrait,
     ReedError,
 };
+use std::sync::Mutex;
 
 pub enum FieldVector<'a, T: Scalar> {
     Active,
@@ -21,6 +22,18 @@ pub struct OperatorField<'a, T: Scalar> {
     restriction: Option<&'a dyn ElemRestrictionTrait<T>>,
     basis: Option<&'a dyn BasisTrait<T>>,
     vector: FieldVector<'a, T>,
+}
+
+#[derive(Clone, Copy)]
+struct InputPlan {
+    field_index: usize,
+    eval_mode: EvalMode,
+}
+
+#[derive(Clone, Copy)]
+struct OutputPlan {
+    field_index: usize,
+    eval_mode: EvalMode,
 }
 
 pub struct OperatorBuilder<'a, T: Scalar> {
@@ -67,6 +80,28 @@ impl<'a, T: Scalar> OperatorBuilder<'a, T> {
         let qfunction = self
             .qfunction
             .ok_or_else(|| ReedError::Operator("operator builder requires a qfunction".into()))?;
+        let input_plans = qfunction
+            .inputs()
+            .iter()
+            .map(|descriptor| {
+                Ok(InputPlan {
+                    field_index: CpuOperator::field_index_by_name(&self.fields, &descriptor.name)?,
+                    eval_mode: descriptor.eval_mode,
+                })
+            })
+            .collect::<ReedResult<Vec<_>>>()?;
+        let output_plans = qfunction
+            .outputs()
+            .iter()
+            .map(|descriptor| {
+                Ok(OutputPlan {
+                    field_index: CpuOperator::field_index_by_name(&self.fields, &descriptor.name)?,
+                    eval_mode: descriptor.eval_mode,
+                })
+            })
+            .collect::<ReedResult<Vec<_>>>()?;
+        let num_qfunction_inputs = input_plans.len();
+        let num_qfunction_outputs = output_plans.len();
         let num_elem = self
             .fields
             .iter()
@@ -99,8 +134,16 @@ impl<'a, T: Scalar> OperatorBuilder<'a, T> {
         Ok(CpuOperator {
             qfunction,
             fields: self.fields,
+            input_plans,
+            output_plans,
             num_elem,
             num_qpoints,
+            workspace: Mutex::new(OperatorWorkspace {
+                q_inputs: (0..num_qfunction_inputs).map(|_| Vec::new()).collect(),
+                q_outputs: (0..num_qfunction_outputs).map(|_| Vec::new()).collect(),
+                input_locals: (0..num_qfunction_inputs).map(|_| Vec::new()).collect(),
+                output_locals: (0..num_qfunction_outputs).map(|_| Vec::new()).collect(),
+            }),
         })
     }
 }
@@ -108,11 +151,28 @@ impl<'a, T: Scalar> OperatorBuilder<'a, T> {
 pub struct CpuOperator<'a, T: Scalar> {
     qfunction: Box<dyn QFunctionTrait<T>>,
     fields: Vec<OperatorField<'a, T>>,
+    input_plans: Vec<InputPlan>,
+    output_plans: Vec<OutputPlan>,
     num_elem: usize,
     num_qpoints: usize,
+    workspace: Mutex<OperatorWorkspace<T>>,
+}
+
+struct OperatorWorkspace<T: Scalar> {
+    q_inputs: Vec<Vec<T>>,
+    q_outputs: Vec<Vec<T>>,
+    input_locals: Vec<Vec<T>>,
+    output_locals: Vec<Vec<T>>,
 }
 
 impl<'a, T: Scalar> CpuOperator<'a, T> {
+    fn field_index_by_name(fields: &[OperatorField<'a, T>], name: &str) -> ReedResult<usize> {
+        fields
+            .iter()
+            .position(|field| field.name == name)
+            .ok_or_else(|| ReedError::Operator(format!("field '{}' not found", name)))
+    }
+
     fn qpoint_component_count(field: &OperatorField<'a, T>, eval_mode: EvalMode) -> ReedResult<usize> {
         match eval_mode {
             EvalMode::None => {
@@ -141,26 +201,21 @@ impl<'a, T: Scalar> CpuOperator<'a, T> {
         }
     }
 
-    fn field_by_name(&self, name: &str) -> ReedResult<&OperatorField<'a, T>> {
-        self.fields
-            .iter()
-            .find(|field| field.name == name)
-            .ok_or_else(|| ReedError::Operator(format!("field '{}' not found", name)))
-    }
-
-    fn prepare_input(
+    fn prepare_input_into(
         &self,
         field: &OperatorField<'a, T>,
         eval_mode: EvalMode,
         active_input: &dyn VectorTrait<T>,
-    ) -> ReedResult<Vec<T>> {
+        local_buffer: &mut Vec<T>,
+        q_buffer: &mut Vec<T>,
+    ) -> ReedResult<()> {
         if matches!(eval_mode, EvalMode::Weight) {
             let basis = field.basis.ok_or_else(|| {
                 ReedError::Operator(format!("field '{}' requires basis for Weight", field.name))
             })?;
-            let mut qdata = vec![T::ZERO; self.num_elem * basis.num_qpoints()];
-            basis.apply(self.num_elem, false, EvalMode::Weight, &[], &mut qdata)?;
-            return Ok(qdata);
+            q_buffer.resize(self.num_elem * basis.num_qpoints(), T::ZERO);
+            basis.apply(self.num_elem, false, EvalMode::Weight, &[], q_buffer)?;
+            return Ok(());
         }
 
         let source = match field.vector {
@@ -175,58 +230,66 @@ impl<'a, T: Scalar> CpuOperator<'a, T> {
         };
 
         let local = if let Some(restriction) = field.restriction {
-            let mut local = vec![T::ZERO; restriction.local_size()];
-            restriction.apply(TransposeMode::NoTranspose, source, &mut local)?;
-            local
+            local_buffer.resize(restriction.local_size(), T::ZERO);
+            restriction.apply(TransposeMode::NoTranspose, source, local_buffer)?;
+            local_buffer.as_slice()
         } else {
-            source.to_vec()
+            source
         };
 
         if let Some(basis) = field.basis {
             let qcomp = Self::qpoint_component_count(field, eval_mode)?;
-            let mut qdata = vec![T::ZERO; self.num_elem * basis.num_qpoints() * qcomp];
-            basis.apply(self.num_elem, false, eval_mode, &local, &mut qdata)?;
-            Ok(qdata)
+            q_buffer.resize(self.num_elem * basis.num_qpoints() * qcomp, T::ZERO);
+            basis.apply(self.num_elem, false, eval_mode, local, q_buffer)?;
         } else {
-            Ok(local)
+            q_buffer.clear();
+            q_buffer.extend_from_slice(local);
         }
+        Ok(())
     }
 
-    fn scatter_output(
+    fn scatter_output_to_slice(
         &self,
         field: &OperatorField<'a, T>,
         eval_mode: EvalMode,
         q_output: &[T],
-        active_output: &mut dyn VectorTrait<T>,
+        local_buffer: &mut Vec<T>,
+        active_output: &mut [T],
     ) -> ReedResult<()> {
         let local = if let Some(basis) = field.basis {
-            let mut local = vec![T::ZERO; self.num_elem * basis.num_dof() * basis.num_comp()];
-            basis.apply(self.num_elem, true, eval_mode, q_output, &mut local)?;
-            local
+            local_buffer.resize(self.num_elem * basis.num_dof() * basis.num_comp(), T::ZERO);
+            basis.apply(self.num_elem, true, eval_mode, q_output, local_buffer)?;
+            local_buffer.as_slice()
         } else {
-            q_output.to_vec()
+            q_output
         };
 
         match field.vector {
             FieldVector::Active => {
                 if let Some(restriction) = field.restriction {
-                    restriction.apply(
-                        TransposeMode::Transpose,
-                        &local,
-                        active_output.as_mut_slice(),
-                    )
+                    restriction.apply(TransposeMode::Transpose, &local, active_output)
                 } else {
-                    let out = active_output.as_mut_slice();
-                    if out.len() != local.len() {
+                    if active_output.len() != local.len() {
                         return Err(ReedError::Operator(format!(
                             "output length {} != local length {} for field '{}'",
-                            out.len(),
+                            active_output.len(),
                             local.len(),
                             field.name
                         )));
                     }
-                    for (dst, src) in out.iter_mut().zip(local.iter()) {
-                        *dst += *src;
+                    #[cfg(feature = "parallel")]
+                    {
+                        use rayon::prelude::*;
+                        active_output
+                            .par_iter_mut()
+                            .zip(local.par_iter())
+                            .for_each(|(dst, src)| *dst += *src);
+                    }
+                    #[cfg(not(feature = "parallel"))]
+                    {
+                        for (dst, src) in active_output.iter_mut().zip(local.iter()) {
+                            *dst += *src;
+                        }
                     }
                     Ok(())
                 }
@@ -247,54 +310,51 @@ impl<'a, T: Scalar> CpuOperator<'a, T> {
         if !add {
             output.set_value(T::ZERO)?;
         }
+        let output_slice = output.as_mut_slice();
 
-        let q_inputs = self
-            .qfunction
-            .inputs()
-            .iter()
-            .map(|descriptor| {
-                let field = self.field_by_name(&descriptor.name)?;
-                self.prepare_input(field, descriptor.eval_mode, input)
-            })
-            .collect::<ReedResult<Vec<_>>>()?;
+        let mut workspace = self.workspace.lock().unwrap();
+        let OperatorWorkspace {
+            q_inputs,
+            q_outputs,
+            input_locals,
+            output_locals,
+        } = &mut *workspace;
 
-        let mut q_outputs = self
-            .qfunction
-            .outputs()
-            .iter()
-            .map(|descriptor| vec![T::ZERO; self.num_elem * self.num_qpoints * descriptor.num_comp])
-            .collect::<Vec<_>>();
-
-        for elem in 0..self.num_elem {
-            let input_slices = self
-                .qfunction
-                .inputs()
-                .iter()
-                .zip(q_inputs.iter())
-                .map(|(descriptor, buffer)| {
-                    let per_elem = self.num_qpoints * descriptor.num_comp;
-                    let start = elem * per_elem;
-                    &buffer[start..start + per_elem]
-                })
-                .collect::<Vec<_>>();
-            let mut output_slices = self
-                .qfunction
-                .outputs()
-                .iter()
-                .zip(q_outputs.iter_mut())
-                .map(|(descriptor, buffer)| {
-                    let per_elem = self.num_qpoints * descriptor.num_comp;
-                    let start = elem * per_elem;
-                    &mut buffer[start..start + per_elem]
-                })
-                .collect::<Vec<_>>();
-            self.qfunction
-                .apply(self.num_qpoints, &input_slices, &mut output_slices)?;
+        for (slot, plan) in self.input_plans.iter().enumerate() {
+            let field = &self.fields[plan.field_index];
+            self.prepare_input_into(
+                field,
+                plan.eval_mode,
+                input,
+                &mut input_locals[slot],
+                &mut q_inputs[slot],
+            )?;
         }
 
-        for (descriptor, q_output) in self.qfunction.outputs().iter().zip(q_outputs.iter()) {
-            let field = self.field_by_name(&descriptor.name)?;
-            self.scatter_output(field, descriptor.eval_mode, q_output, output)?;
+        for (slot, descriptor) in self.qfunction.outputs().iter().enumerate() {
+            q_outputs[slot].resize(
+                self.num_elem * self.num_qpoints * descriptor.num_comp,
+                T::ZERO,
+            );
+        }
+
+        let input_slices = q_inputs.iter().map(Vec::as_slice).collect::<Vec<_>>();
+        let mut output_slices = q_outputs.iter_mut().map(Vec::as_mut_slice).collect::<Vec<_>>();
+        self.qfunction.apply(
+            self.num_elem * self.num_qpoints,
+            &input_slices,
+            &mut output_slices,
+        )?;
+
+        for (slot, plan) in self.output_plans.iter().enumerate() {
+            let field = &self.fields[plan.field_index];
+            self.scatter_output_to_slice(
+                field,
+                plan.eval_mode,
+                &q_outputs[slot],
+                &mut output_locals[slot],
+                output_slice,
+            )?;
         }
         Ok(())
     }
