@@ -27,3 +27,7 @@ reed-wgpu = { path = "crates/wgpu", optional = true }
 default = ["parallel"]
 parallel = ["reed-cpu/parallel"]
 wgpu-backend = ["dep:reed-wgpu"]
+hypre-rs = []
+petsc-rs = []
+mumps = []
+mkl = []
