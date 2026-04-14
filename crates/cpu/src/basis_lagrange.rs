@@ -795,8 +795,8 @@ unsafe fn tensor_contract_f64_avx2(
 ) {
     use std::arch::x86_64::{
         __m128d, __m256d, _mm_add_pd, _mm_cvtsd_f64, _mm_unpackhi_pd,
-        _mm256_broadcast_sd, _mm256_castpd256_pd128, _mm256_extractf128_pd,
-        _mm256_fmadd_pd, _mm256_loadu_pd, _mm256_setzero_pd, _mm256_storeu_pd,
+        _mm256_castpd256_pd128, _mm256_extractf128_pd, _mm256_fmadd_pd, _mm256_loadu_pd,
+        _mm256_setzero_pd, _mm256_storeu_pd, _mm256_broadcast_sd,
     };
 
     #[inline]
@@ -813,7 +813,7 @@ unsafe fn tensor_contract_f64_avx2(
         while pi + 4 <= p {
             let mut acc = _mm256_setzero_pd();
             for qi in 0..q {
-                let coeff = _mm256_broadcast_sd(&*u.as_ptr().add(qi));
+                let coeff = _mm256_broadcast_sd(&u[qi]);
                 let row = _mm256_loadu_pd(b.as_ptr().add(qi * p + pi));
                 acc = _mm256_fmadd_pd(coeff, row, acc);
             }
@@ -879,7 +879,7 @@ unsafe fn tensor_contract_f64_avx2_accumulate(
         while pi + 4 <= p {
             let mut acc = _mm256_setzero_pd();
             for qi in 0..q {
-                let coeff = _mm256_broadcast_sd(&*u.as_ptr().add(qi));
+                let coeff = _mm256_broadcast_sd(&u[qi]);
                 let row = _mm256_loadu_pd(b.as_ptr().add(qi * p + pi));
                 acc = _mm256_fmadd_pd(coeff, row, acc);
             }
