@@ -13,6 +13,7 @@ pub struct GpuRuntime {
     restriction_pipeline: wgpu::ComputePipeline,
     basis_interp_layout: wgpu::BindGroupLayout,
     basis_interp_pipeline: wgpu::ComputePipeline,
+    basis_interp_transpose_pipeline: wgpu::ComputePipeline,
 }
 
 impl GpuRuntime {
@@ -252,6 +253,8 @@ impl GpuRuntime {
             create_pipeline(&device, &restriction_layout, "restriction_gather_main");
         let basis_interp_pipeline =
             create_pipeline(&device, &basis_interp_layout, "basis_interp_main");
+        let basis_interp_transpose_pipeline =
+            create_pipeline(&device, &basis_interp_layout, "basis_interp_transpose_main");
 
         Self {
             device,
@@ -266,6 +269,7 @@ impl GpuRuntime {
             restriction_pipeline,
             basis_interp_layout,
             basis_interp_pipeline,
+            basis_interp_transpose_pipeline,
         }
     }
 
@@ -311,6 +315,10 @@ impl GpuRuntime {
 
     pub fn basis_interp_pipeline(&self) -> &wgpu::ComputePipeline {
         &self.basis_interp_pipeline
+    }
+
+    pub fn basis_interp_transpose_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.basis_interp_transpose_pipeline
     }
 }
 
@@ -450,6 +458,27 @@ fn basis_interp_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let mat_row_base = qpt * bi_p.num_dof;
     for (var dof = 0u; dof < bi_p.num_dof; dof = dof + 1u) {
         sum = sum + bi_mat[mat_row_base + dof] * bi_u[u_elem_base + dof];
+    }
+    bi_v[idx] = sum;
+}
+
+@compute @workgroup_size(64)
+fn basis_interp_transpose_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let idx = gid.x;
+    if (idx >= bi_p.output_size) {
+        return;
+    }
+
+    let per_elem_out = bi_p.ncomp * bi_p.num_dof;
+    let elem = idx / per_elem_out;
+    let rem = idx % per_elem_out;
+    let comp = rem / bi_p.num_dof;
+    let dof = rem % bi_p.num_dof;
+
+    var sum = 0.0;
+    let u_elem_base = (elem * bi_p.ncomp + comp) * bi_p.num_qpoints;
+    for (var qpt = 0u; qpt < bi_p.num_qpoints; qpt = qpt + 1u) {
+        sum = sum + bi_mat[qpt * bi_p.num_dof + dof] * bi_u[u_elem_base + qpt];
     }
     bi_v[idx] = sum;
 }

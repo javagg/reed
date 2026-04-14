@@ -52,7 +52,7 @@ impl<T: Scalar> WgpuBasis<T> {
         u: &[T],
         v: &mut [T],
     ) -> ReedResult<bool> {
-        if transpose || !Self::supports_f32_gpu() {
+        if !Self::supports_f32_gpu() {
             return Ok(false);
         }
         let Some(runtime) = &self.runtime else {
@@ -65,8 +65,16 @@ impl<T: Scalar> WgpuBasis<T> {
         let num_dof = self.cpu_fallback.num_dof();
         let num_qpoints = self.cpu_fallback.num_qpoints();
         let ncomp = self.cpu_fallback.num_comp();
-        let in_size = num_elem * num_dof * ncomp;
-        let out_size = num_elem * num_qpoints * ncomp;
+        let in_size = if transpose {
+            num_elem * num_qpoints * ncomp
+        } else {
+            num_elem * num_dof * ncomp
+        };
+        let out_size = if transpose {
+            num_elem * num_dof * ncomp
+        } else {
+            num_elem * num_qpoints * ncomp
+        };
         if u.len() != in_size || v.len() != out_size {
             return Err(ReedError::Basis(format!(
                 "interp apply size mismatch: input {}, expected {}; output {}, expected {}",
@@ -165,7 +173,11 @@ impl<T: Scalar> WgpuBasis<T> {
                 label: Some("wgpu-basis-interp-pass"),
                 timestamp_writes: None,
             });
-            pass.set_pipeline(runtime.basis_interp_pipeline());
+            if transpose {
+                pass.set_pipeline(runtime.basis_interp_transpose_pipeline());
+            } else {
+                pass.set_pipeline(runtime.basis_interp_pipeline());
+            }
             pass.set_bind_group(0, &bind, &[]);
             let groups = (out_size as u32).div_ceil(64);
             pass.dispatch_workgroups(groups, 1, 1);

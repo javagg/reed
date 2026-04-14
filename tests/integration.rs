@@ -301,3 +301,33 @@ fn test_wgpu_basis_interp_matches_cpu() {
         assert!((a - b).abs() < 1.0e-5);
     }
 }
+
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_basis_interp_transpose_matches_cpu() {
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+
+    let b_cpu = reed_cpu
+        .basis_tensor_h1_lagrange(1, 1, 3, 4, QuadMode::Gauss)
+        .unwrap();
+    let b_gpu = reed_gpu
+        .basis_tensor_h1_lagrange(1, 1, 3, 4, QuadMode::Gauss)
+        .unwrap();
+
+    let num_elem = 2usize;
+    let u = vec![0.5_f32, -0.25, 1.0, 2.0, -1.0, 0.75, 0.25, -0.5];
+    let mut v_cpu = vec![0.0_f32; num_elem * b_cpu.num_dof() * b_cpu.num_comp()];
+    let mut v_gpu = vec![0.0_f32; num_elem * b_gpu.num_dof() * b_gpu.num_comp()];
+
+    b_cpu
+        .apply(num_elem, true, EvalMode::Interp, &u, &mut v_cpu)
+        .unwrap();
+    b_gpu
+        .apply(num_elem, true, EvalMode::Interp, &u, &mut v_gpu)
+        .unwrap();
+
+    for (a, b) in v_cpu.iter().zip(v_gpu.iter()) {
+        assert!((a - b).abs() < 1.0e-5);
+    }
+}

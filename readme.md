@@ -64,6 +64,36 @@ Current benchmark groups:
 - `cpu_poisson_apply`
 - `cpu_combined_apply`
 
+## Native WGPU microbenchmarks
+
+Criterion benchmarks are also available for the currently GPU-backed native WGPU paths.
+
+```bash
+cargo bench --features wgpu-backend --bench wgpu_backend
+```
+
+Current WGPU benchmark groups:
+
+- `wgpu_vector_ops`
+- `wgpu_elem_restriction`
+- `wgpu_basis_interp`
+
+Direct CPU/WGPU comparison benchmark:
+
+```bash
+cargo bench --features wgpu-backend --bench backend_compare
+```
+
+Current comparison groups:
+
+- `compare_vector_axpy`
+- `compare_restriction_gather`
+- `compare_basis_interp`
+
+These are microbenchmarks for the portions that currently execute real WGPU compute kernels on native `f32` data. They are not end-to-end operator benchmarks yet, because operator assembly/QFunction execution still routes through CPU code paths.
+
+GPU coverage now also includes `Basis::apply(..., transpose = true, EvalMode::Interp)` for native `f32`, which removes one more CPU fallback from the operator output path.
+
 ## WASM compile
 
 CPU backend can be compiled for `wasm32-unknown-unknown`.
