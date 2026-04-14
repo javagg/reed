@@ -13,7 +13,7 @@ pub struct Reed<T: Scalar> {
     inner: reed_core::Reed<T>,
 }
 
-/// Canonical external solver backend IDs shared across subprojects.
+/// Canonical solver backend IDs shared across subprojects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExternalSolverBackend {
     HypreRs,
@@ -116,6 +116,10 @@ impl<T: Scalar> Reed<T> {
     ///
     /// Accepted examples: `/native/linger`, `/gpu/wgpu`, `/solver/mkl`,
     /// `/solver/petsc-rs`.
+    ///
+    /// Compatibility aliases like `/solver/mumps` and `/solver/mkl` are
+    /// normalized through backend selection and currently resolve to the native
+    /// linger/cpu execution path in reed.
     pub fn init_with_backend_resource(
         resource: &str,
     ) -> ReedResult<(Self, ReedBackendSelectionReport)> {
@@ -312,13 +316,35 @@ fn resolve_backend_request(
                 ExternalSolverBackend::Mkl => ("mkl", caps.mkl, "/solver/mkl"),
             };
 
+            let is_native_compat = matches!(backend, ExternalSolverBackend::Mumps | ExternalSolverBackend::Mkl);
+
             if caps.wasm_target {
                 ReedBackendSelectionReport {
                     requested,
                     effective_resource: "/cpu/self".to_string(),
                     capabilities: caps,
                     note: format!(
-                        "Requested {} on wasm32 target; external solver backends are unavailable and deterministically fall back to native linger/cpu path.",
+                        "Requested {} on wasm32 target; solver compatibility aliases deterministically fall back to native linger/cpu path.",
+                        name
+                    ),
+                }
+            } else if is_native_compat && enabled {
+                ReedBackendSelectionReport {
+                    requested,
+                    effective_resource: "/cpu/self".to_string(),
+                    capabilities: caps,
+                    note: format!(
+                        "Requested {}. Capability is enabled; reed treats {} as a compatibility alias and resolves it to the native linger/cpu path.",
+                        name, resource
+                    ),
+                }
+            } else if is_native_compat {
+                ReedBackendSelectionReport {
+                    requested,
+                    effective_resource: "/cpu/self".to_string(),
+                    capabilities: caps,
+                    note: format!(
+                        "Requested {}, but its compatibility flag is disabled; using deterministic native linger/cpu path.",
                         name
                     ),
                 }
@@ -367,16 +393,21 @@ mod tests {
     }
 
     #[test]
-    fn backend_report_mkl_defaults_to_fallback_until_wiring() {
+    fn backend_report_mkl_resolves_to_native_linger() {
         let rep = Reed::<f64>::backend_selection_report(Some(ReedBackendRequest::ExternalSolver(
             ExternalSolverBackend::Mkl,
         )));
-        if rep.capabilities.mkl && !rep.capabilities.wasm_target {
-            assert_eq!(rep.effective_resource, "/solver/mkl");
-        } else {
-            assert_eq!(rep.effective_resource, "/cpu/self");
-        }
+        assert_eq!(rep.effective_resource, "/cpu/self");
         assert!(rep.note.contains("mkl"));
+    }
+
+    #[test]
+    fn backend_report_mumps_resolves_to_native_linger() {
+        let rep = Reed::<f64>::backend_selection_report(Some(ReedBackendRequest::ExternalSolver(
+            ExternalSolverBackend::Mumps,
+        )));
+        assert_eq!(rep.effective_resource, "/cpu/self");
+        assert!(rep.note.contains("mumps"));
     }
 
     #[test]
