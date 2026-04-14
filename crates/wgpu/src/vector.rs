@@ -25,14 +25,46 @@ impl<T: Scalar> WgpuVector<T> {
         TypeId::of::<T>() == TypeId::of::<f32>()
     }
 
+    /// For f32 type, directly cast the data slice; for other types, convert element by element.
+    /// Returns None if conversion fails for non-f32 types.
+    fn as_f32_slice(data: &[T]) -> Option<&[f32]> {
+        if TypeId::of::<T>() == TypeId::of::<f32>() {
+            // SAFETY: We just verified T == f32
+            Some(unsafe { std::slice::from_raw_parts(data.as_ptr().cast(), data.len()) })
+        } else {
+            None
+        }
+    }
+
+    /// For f32 type, directly cast the mutable data slice.
+    fn as_f32_slice_mut(data: &mut [T]) -> Option<&mut [f32]> {
+        if TypeId::of::<T>() == TypeId::of::<f32>() {
+            // SAFETY: We just verified T == f32
+            Some(unsafe { std::slice::from_raw_parts_mut(data.as_mut_ptr().cast(), data.len()) })
+        } else {
+            None
+        }
+    }
+
     fn as_f32_vec(data: &[T]) -> Option<Vec<f32>> {
-        data.iter().map(|v| NumCast::from(*v)).collect::<Option<Vec<f32>>>()
+        // Fast path for f32: direct cast, no per-element conversion
+        if let Some(slice) = Self::as_f32_slice(data) {
+            return Some(slice.to_vec());
+        }
+        // Slow path: element-by-element conversion
+        data.iter().map(|v| NumCast::from(*v)).collect()
     }
 
     fn from_f32_into(data: &mut [T], f32_data: &[f32]) -> ReedResult<()> {
         if data.len() != f32_data.len() {
             return Err(ReedError::Vector("size mismatch during gpu readback".into()));
         }
+        // Fast path for f32: direct copy
+        if let Some(dst) = Self::as_f32_slice_mut(data) {
+            dst.copy_from_slice(f32_data);
+            return Ok(());
+        }
+        // Slow path: element-by-element conversion
         for (dst, src) in data.iter_mut().zip(f32_data.iter()) {
             *dst = NumCast::from(*src)
                 .ok_or_else(|| ReedError::Vector("f32->T conversion failed".into()))?;
@@ -44,22 +76,20 @@ impl<T: Scalar> WgpuVector<T> {
         let Some(runtime) = &self.runtime else {
             return Ok(false);
         };
-        let Some(mut y) = Self::as_f32_vec(&self.data) else {
-            return Ok(false);
-        };
+        let data_len = self.data.len();
+        let buffer_size = (data_len * std::mem::size_of::<f32>()) as u64;
 
-        let y_bytes: &[u8] = bytemuck::cast_slice(&y);
-        let y_buffer = runtime
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("wgpu-vector-y-set"),
-                contents: y_bytes,
-                usage: wgpu::BufferUsages::STORAGE
-                    | wgpu::BufferUsages::COPY_SRC
-                    | wgpu::BufferUsages::COPY_DST,
-            });
+        // For set_value, we don't need to upload existing data
+        let y_buffer = runtime.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("wgpu-vector-y-set"),
+            size: buffer_size,
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::COPY_SRC
+                | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
 
-        let params = [alpha, self.data.len() as f32, 0.0, 0.0];
+        let params = [alpha, data_len as f32, 0.0, 0.0];
         let p_buffer = runtime
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -85,7 +115,7 @@ impl<T: Scalar> WgpuVector<T> {
 
         let readback = runtime.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("wgpu-vector-readback-set"),
-            size: (y.len() * std::mem::size_of::<f32>()) as u64,
+            size: buffer_size,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
@@ -102,21 +132,17 @@ impl<T: Scalar> WgpuVector<T> {
             });
             pass.set_pipeline(runtime.set_pipeline());
             pass.set_bind_group(0, &bind, &[]);
-            let groups = (self.data.len() as u32).div_ceil(64);
+            let groups = (data_len as u32).div_ceil(64);
             pass.dispatch_workgroups(groups, 1, 1);
         }
 
-        encoder.copy_buffer_to_buffer(
-            &y_buffer,
-            0,
-            &readback,
-            0,
-            (y.len() * std::mem::size_of::<f32>()) as u64,
-        );
+        encoder.copy_buffer_to_buffer(&y_buffer, 0, &readback, 0, buffer_size);
         runtime.queue.submit(Some(encoder.finish()));
 
-        map_readback_f32(&runtime.device, &readback, &mut y)?;
-        Self::from_f32_into(&mut self.data, &y)?;
+        // Read back to CPU
+        let mut y_f32 = vec![0.0f32; data_len];
+        map_readback_f32(&runtime.device, &readback, &mut y_f32)?;
+        Self::from_f32_into(&mut self.data, &y_f32)?;
         Ok(true)
     }
 
@@ -124,21 +150,27 @@ impl<T: Scalar> WgpuVector<T> {
         let Some(runtime) = &self.runtime else {
             return Ok(false);
         };
-        let Some(mut y) = Self::as_f32_vec(&self.data) else {
+
+        // Fast path for f32: avoid conversion allocation
+        let y_f32 = if let Some(slice) = Self::as_f32_slice(&self.data) {
+            slice.to_vec()
+        } else {
             return Ok(false);
         };
+        let data_len = y_f32.len();
+        let buffer_size = (data_len * std::mem::size_of::<f32>()) as u64;
 
         let y_buffer = runtime
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("wgpu-vector-y-scale"),
-                contents: bytemuck::cast_slice(&y),
+                contents: bytemuck::cast_slice(&y_f32),
                 usage: wgpu::BufferUsages::STORAGE
                     | wgpu::BufferUsages::COPY_SRC
                     | wgpu::BufferUsages::COPY_DST,
             });
 
-        let params = [alpha, self.data.len() as f32, 0.0, 0.0];
+        let params = [alpha, data_len as f32, 0.0, 0.0];
         let p_buffer = runtime
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -164,7 +196,7 @@ impl<T: Scalar> WgpuVector<T> {
 
         let readback = runtime.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("wgpu-vector-readback-scale"),
-            size: (y.len() * std::mem::size_of::<f32>()) as u64,
+            size: buffer_size,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
@@ -181,21 +213,16 @@ impl<T: Scalar> WgpuVector<T> {
             });
             pass.set_pipeline(runtime.scale_pipeline());
             pass.set_bind_group(0, &bind, &[]);
-            let groups = (self.data.len() as u32).div_ceil(64);
+            let groups = (data_len as u32).div_ceil(64);
             pass.dispatch_workgroups(groups, 1, 1);
         }
 
-        encoder.copy_buffer_to_buffer(
-            &y_buffer,
-            0,
-            &readback,
-            0,
-            (y.len() * std::mem::size_of::<f32>()) as u64,
-        );
+        encoder.copy_buffer_to_buffer(&y_buffer, 0, &readback, 0, buffer_size);
         runtime.queue.submit(Some(encoder.finish()));
 
-        map_readback_f32(&runtime.device, &readback, &mut y)?;
-        Self::from_f32_into(&mut self.data, &y)?;
+        let mut y_result = vec![0.0f32; data_len];
+        map_readback_f32(&runtime.device, &readback, &mut y_result)?;
+        Self::from_f32_into(&mut self.data, &y_result)?;
         Ok(true)
     }
 
@@ -203,18 +230,26 @@ impl<T: Scalar> WgpuVector<T> {
         let Some(runtime) = &self.runtime else {
             return Ok(false);
         };
-        let Some(mut y) = Self::as_f32_vec(&self.data) else {
+
+        // Fast path for f32: avoid conversion allocation
+        let y_f32 = if let Some(slice) = Self::as_f32_slice(&self.data) {
+            slice.to_vec()
+        } else {
             return Ok(false);
         };
-        let Some(x_f32) = Self::as_f32_vec(x) else {
+        let x_f32 = if let Some(slice) = Self::as_f32_slice(x) {
+            slice.to_vec()
+        } else {
             return Ok(false);
         };
+        let data_len = y_f32.len();
+        let buffer_size = (data_len * std::mem::size_of::<f32>()) as u64;
 
         let y_buffer = runtime
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("wgpu-vector-y-axpy"),
-                contents: bytemuck::cast_slice(&y),
+                contents: bytemuck::cast_slice(&y_f32),
                 usage: wgpu::BufferUsages::STORAGE
                     | wgpu::BufferUsages::COPY_SRC
                     | wgpu::BufferUsages::COPY_DST,
@@ -227,7 +262,7 @@ impl<T: Scalar> WgpuVector<T> {
                 usage: wgpu::BufferUsages::STORAGE,
             });
 
-        let params = [alpha, self.data.len() as f32, 0.0, 0.0];
+        let params = [alpha, data_len as f32, 0.0, 0.0];
         let p_buffer = runtime
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -257,7 +292,7 @@ impl<T: Scalar> WgpuVector<T> {
 
         let readback = runtime.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("wgpu-vector-readback-axpy"),
-            size: (y.len() * std::mem::size_of::<f32>()) as u64,
+            size: buffer_size,
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
@@ -274,21 +309,16 @@ impl<T: Scalar> WgpuVector<T> {
             });
             pass.set_pipeline(runtime.axpy_pipeline());
             pass.set_bind_group(0, &bind, &[]);
-            let groups = (self.data.len() as u32).div_ceil(64);
+            let groups = (data_len as u32).div_ceil(64);
             pass.dispatch_workgroups(groups, 1, 1);
         }
 
-        encoder.copy_buffer_to_buffer(
-            &y_buffer,
-            0,
-            &readback,
-            0,
-            (y.len() * std::mem::size_of::<f32>()) as u64,
-        );
+        encoder.copy_buffer_to_buffer(&y_buffer, 0, &readback, 0, buffer_size);
         runtime.queue.submit(Some(encoder.finish()));
 
-        map_readback_f32(&runtime.device, &readback, &mut y)?;
-        Self::from_f32_into(&mut self.data, &y)?;
+        let mut y_result = vec![0.0f32; data_len];
+        map_readback_f32(&runtime.device, &readback, &mut y_result)?;
+        Self::from_f32_into(&mut self.data, &y_result)?;
         Ok(true)
     }
 }

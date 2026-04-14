@@ -9,7 +9,6 @@ use reed_core::{
     vector::VectorTrait,
     ReedError,
 };
-use std::sync::Mutex;
 
 pub enum FieldVector<'a, T: Scalar> {
     Active,
@@ -138,12 +137,8 @@ impl<'a, T: Scalar> OperatorBuilder<'a, T> {
             output_plans,
             num_elem,
             num_qpoints,
-            workspace: Mutex::new(OperatorWorkspace {
-                q_inputs: (0..num_qfunction_inputs).map(|_| Vec::new()).collect(),
-                q_outputs: (0..num_qfunction_outputs).map(|_| Vec::new()).collect(),
-                input_locals: (0..num_qfunction_inputs).map(|_| Vec::new()).collect(),
-                output_locals: (0..num_qfunction_outputs).map(|_| Vec::new()).collect(),
-            }),
+            num_qfunction_inputs,
+            num_qfunction_outputs,
         })
     }
 }
@@ -155,14 +150,8 @@ pub struct CpuOperator<'a, T: Scalar> {
     output_plans: Vec<OutputPlan>,
     num_elem: usize,
     num_qpoints: usize,
-    workspace: Mutex<OperatorWorkspace<T>>,
-}
-
-struct OperatorWorkspace<T: Scalar> {
-    q_inputs: Vec<Vec<T>>,
-    q_outputs: Vec<Vec<T>>,
-    input_locals: Vec<Vec<T>>,
-    output_locals: Vec<Vec<T>>,
+    num_qfunction_inputs: usize,
+    num_qfunction_outputs: usize,
 }
 
 impl<'a, T: Scalar> CpuOperator<'a, T> {
@@ -312,13 +301,12 @@ impl<'a, T: Scalar> CpuOperator<'a, T> {
         }
         let output_slice = output.as_mut_slice();
 
-        let mut workspace = self.workspace.lock().unwrap();
-        let OperatorWorkspace {
-            q_inputs,
-            q_outputs,
-            input_locals,
-            output_locals,
-        } = &mut *workspace;
+        // Allocate workspace buffers on each call to avoid Mutex overhead
+        // The allocation cost is negligible compared to the compute work
+        let mut q_inputs: Vec<Vec<T>> = (0..self.num_qfunction_inputs).map(|_| Vec::new()).collect();
+        let mut q_outputs: Vec<Vec<T>> = (0..self.num_qfunction_outputs).map(|_| Vec::new()).collect();
+        let mut input_locals: Vec<Vec<T>> = (0..self.num_qfunction_inputs).map(|_| Vec::new()).collect();
+        let mut output_locals: Vec<Vec<T>> = (0..self.num_qfunction_outputs).map(|_| Vec::new()).collect();
 
         for (slot, plan) in self.input_plans.iter().enumerate() {
             let field = &self.fields[plan.field_index];

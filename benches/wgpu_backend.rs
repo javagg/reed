@@ -91,6 +91,7 @@ fn bench_wgpu_basis_interp(c: &mut Criterion) {
     let reed = Reed::<f32>::init("/gpu/wgpu").unwrap();
     let mut group = c.benchmark_group("wgpu_basis_interp");
 
+    // 1D benchmarks
     for &(p, q, num_elem) in &[(4usize, 6usize, 8_192usize), (8, 10, 4_096)] {
         let basis = reed
             .basis_tensor_h1_lagrange(1, 1, p, q, QuadMode::Gauss)
@@ -103,7 +104,69 @@ fn bench_wgpu_basis_interp(c: &mut Criterion) {
         let mut output = vec![0.0_f32; output_len];
 
         group.bench_with_input(
-            BenchmarkId::new("interp", format!("p{p}_q{q}_e{num_elem}")),
+            BenchmarkId::new("interp", format!("dim1_p{p}_q{q}_e{num_elem}")),
+            &(p, q, num_elem),
+            |b, _| {
+                b.iter(|| {
+                    basis
+                        .apply(
+                            num_elem,
+                            false,
+                            EvalMode::Interp,
+                            black_box(&input),
+                            black_box(&mut output),
+                        )
+                        .unwrap();
+                });
+            },
+        );
+    }
+
+    // 2D benchmarks
+    for &(p, q, num_elem) in &[(4usize, 6usize, 1_024usize), (6, 8, 256)] {
+        let basis = reed
+            .basis_tensor_h1_lagrange(2, 1, p, q, QuadMode::Gauss)
+            .unwrap();
+        let input_len = num_elem * basis.num_dof();
+        let output_len = num_elem * basis.num_qpoints();
+        let input = (0..input_len)
+            .map(|index| ((index % 31) as f32 - 15.0) * 0.0625)
+            .collect::<Vec<_>>();
+        let mut output = vec![0.0_f32; output_len];
+
+        group.bench_with_input(
+            BenchmarkId::new("interp", format!("dim2_p{p}_q{q}_e{num_elem}")),
+            &(p, q, num_elem),
+            |b, _| {
+                b.iter(|| {
+                    basis
+                        .apply(
+                            num_elem,
+                            false,
+                            EvalMode::Interp,
+                            black_box(&input),
+                            black_box(&mut output),
+                        )
+                        .unwrap();
+                });
+            },
+        );
+    }
+
+    // 3D benchmarks
+    for &(p, q, num_elem) in &[(4usize, 6usize, 128usize), (6, 8, 64)] {
+        let basis = reed
+            .basis_tensor_h1_lagrange(3, 1, p, q, QuadMode::Gauss)
+            .unwrap();
+        let input_len = num_elem * basis.num_dof();
+        let output_len = num_elem * basis.num_qpoints();
+        let input = (0..input_len)
+            .map(|index| ((index % 31) as f32 - 15.0) * 0.0625)
+            .collect::<Vec<_>>();
+        let mut output = vec![0.0_f32; output_len];
+
+        group.bench_with_input(
+            BenchmarkId::new("interp", format!("dim3_p{p}_q{q}_e{num_elem}")),
             &(p, q, num_elem),
             |b, _| {
                 b.iter(|| {

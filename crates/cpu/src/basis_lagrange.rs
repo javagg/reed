@@ -257,6 +257,7 @@ impl<T: Scalar> LagrangeBasis<T> {
         let qp = self.q * self.p;
         let qq = self.q * self.q;
         let pp = self.p * self.p;
+        // Small buffer: q * p elements (typically 24-80 elements for p=4-8, q=6-10)
         let mut tmp = vec![T::ZERO; qp];
 
         for comp in 0..self.ncomp {
@@ -319,6 +320,7 @@ impl<T: Scalar> LagrangeBasis<T> {
         let q2 = self.q * self.q;
         let ppp = p2 * self.p;
         let qqq = q2 * self.q;
+        // Small buffers: q * p^2 (typically 96-512) and q^2 * p (typically 144-800)
         let mut tmp_x = vec![T::ZERO; self.q * p2];
         let mut tmp_xy = vec![T::ZERO; q2 * self.p];
 
@@ -424,13 +426,16 @@ impl<T: Scalar> LagrangeBasis<T> {
     fn apply_grad_elem_2d(&self, transpose: bool, u_elem: &[T], v_elem: &mut [T]) {
         let qcomp = self.ncomp * 2;
         let pp = self.p * self.p;
+        // Small buffers: q * p (typically 24-80) and p^2 (typically 16-64)
         let mut tmp_interp_x = vec![T::ZERO; self.q * self.p];
         let mut tmp_grad_x = vec![T::ZERO; self.q * self.p];
+        let mut accum_x = vec![T::ZERO; pp];
+        let mut accum_y = vec![T::ZERO; pp];
 
         for comp in 0..self.ncomp {
             if transpose {
-                let mut accum_x = vec![T::ZERO; pp];
-                let mut accum_y = vec![T::ZERO; pp];
+                accum_x.fill(T::ZERO);
+                accum_y.fill(T::ZERO);
 
                 for qx in 0..self.q {
                     tensor_contract_strided(
@@ -530,6 +535,7 @@ impl<T: Scalar> LagrangeBasis<T> {
         let p2 = self.p * self.p;
         let q2 = self.q * self.q;
         let ppp = p2 * self.p;
+        // Small buffers: q * p^2 (typically 96-512), q^2 * p (typically 144-800), p^3 (typically 64-512)
         let mut tmp_x = vec![T::ZERO; self.q * p2];
         let mut tmp_y = vec![T::ZERO; q2 * self.p];
         let mut accum = vec![T::ZERO; ppp];
@@ -659,6 +665,11 @@ pub fn tensor_contract_strided<T: Scalar>(
     p: usize,
     transpose: bool,
 ) {
+    // Try f32 SIMD first (8-wide vectors, potentially faster than f64)
+    if try_tensor_contract_simd_f32(b, u, u_stride, v, v_stride, q, p, transpose) {
+        return;
+    }
+    // Fall back to f64 SIMD (4-wide vectors)
     if try_tensor_contract_simd_f64(b, u, u_stride, v, v_stride, q, p, transpose) {
         return;
     }
@@ -696,6 +707,50 @@ fn tensor_contract_strided_scalar<T: Scalar>(
 }
 
 #[cfg(target_arch = "x86_64")]
+fn try_tensor_contract_simd_f32<T: Scalar>(
+    b: &[T],
+    u: &[T],
+    u_stride: usize,
+    v: &mut [T],
+    v_stride: usize,
+    q: usize,
+    p: usize,
+    transpose: bool,
+) -> bool {
+    if TypeId::of::<T>() != TypeId::of::<f32>() || u_stride != 1 || v_stride != 1 || p < 8 {
+        return false;
+    }
+
+    if !std::arch::is_x86_feature_detected!("avx2")
+        || !std::arch::is_x86_feature_detected!("fma")
+    {
+        return false;
+    }
+
+    unsafe {
+        let b_f32 = std::slice::from_raw_parts(b.as_ptr().cast::<f32>(), b.len());
+        let u_f32 = std::slice::from_raw_parts(u.as_ptr().cast::<f32>(), u.len());
+        let v_f32 = std::slice::from_raw_parts_mut(v.as_mut_ptr().cast::<f32>(), v.len());
+        tensor_contract_f32_avx2(b_f32, u_f32, v_f32, q, p, transpose);
+    }
+    true
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn try_tensor_contract_simd_f32<T: Scalar>(
+    _b: &[T],
+    _u: &[T],
+    _u_stride: usize,
+    _v: &mut [T],
+    _v_stride: usize,
+    _q: usize,
+    _p: usize,
+    _transpose: bool,
+) -> bool {
+    false
+}
+
+#[cfg(target_arch = "x86_64")]
 fn try_tensor_contract_simd_f64<T: Scalar>(
     b: &[T],
     u: &[T],
@@ -727,6 +782,50 @@ fn try_tensor_contract_simd_f64<T: Scalar>(
 
 #[cfg(not(target_arch = "x86_64"))]
 fn try_tensor_contract_simd_f64<T: Scalar>(
+    _b: &[T],
+    _u: &[T],
+    _u_stride: usize,
+    _v: &mut [T],
+    _v_stride: usize,
+    _q: usize,
+    _p: usize,
+    _transpose: bool,
+) -> bool {
+    false
+}
+
+#[cfg(target_arch = "x86_64")]
+fn try_tensor_contract_accumulate_simd_f32<T: Scalar>(
+    b: &[T],
+    u: &[T],
+    u_stride: usize,
+    v: &mut [T],
+    v_stride: usize,
+    q: usize,
+    p: usize,
+    transpose: bool,
+) -> bool {
+    if TypeId::of::<T>() != TypeId::of::<f32>() || u_stride != 1 || v_stride != 1 || p < 8 {
+        return false;
+    }
+
+    if !std::arch::is_x86_feature_detected!("avx2")
+        || !std::arch::is_x86_feature_detected!("fma")
+    {
+        return false;
+    }
+
+    unsafe {
+        let b_f32 = std::slice::from_raw_parts(b.as_ptr().cast::<f32>(), b.len());
+        let u_f32 = std::slice::from_raw_parts(u.as_ptr().cast::<f32>(), u.len());
+        let v_f32 = std::slice::from_raw_parts_mut(v.as_mut_ptr().cast::<f32>(), v.len());
+        tensor_contract_f32_avx2_accumulate(b_f32, u_f32, v_f32, q, p, transpose);
+    }
+    true
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+fn try_tensor_contract_accumulate_simd_f32<T: Scalar>(
     _b: &[T],
     _u: &[T],
     _u_stride: usize,
@@ -781,6 +880,143 @@ fn try_tensor_contract_accumulate_simd_f64<T: Scalar>(
     _transpose: bool,
 ) -> bool {
     false
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2", enable = "fma")]
+unsafe fn tensor_contract_f32_avx2(
+    b: &[f32],
+    u: &[f32],
+    v: &mut [f32],
+    q: usize,
+    p: usize,
+    transpose: bool,
+) {
+    use std::arch::x86_64::{
+        __m256, _mm_add_ps, _mm_cvtss_f32, _mm256_broadcast_ss, _mm256_castps256_ps128,
+        _mm256_extractf128_ps, _mm256_fmadd_ps, _mm256_loadu_ps, _mm256_setzero_ps,
+        _mm256_storeu_ps, _mm_movehl_ps, _mm_shuffle_ps,
+    };
+
+    #[inline]
+    unsafe fn hsum_ps(sum: __m256) -> f32 {
+        let lo = _mm256_castps256_ps128(sum);
+        let hi = _mm256_extractf128_ps(sum, 1);
+        let pair = _mm_add_ps(lo, hi);
+        let shuffled = _mm_movehl_ps(pair, pair);
+        let sum = _mm_add_ps(pair, shuffled);
+        let shuffled2 = _mm_shuffle_ps(sum, sum, 1);
+        _mm_cvtss_f32(_mm_add_ps(sum, shuffled2))
+    }
+
+    if transpose {
+        let mut pi = 0;
+        while pi + 8 <= p {
+            let mut acc = _mm256_setzero_ps();
+            for qi in 0..q {
+                let coeff = _mm256_broadcast_ss(&*u.as_ptr().add(qi));
+                let row = _mm256_loadu_ps(b.as_ptr().add(qi * p + pi));
+                acc = _mm256_fmadd_ps(coeff, row, acc);
+            }
+            _mm256_storeu_ps(v.as_mut_ptr().add(pi), acc);
+            pi += 8;
+        }
+        while pi < p {
+            let mut sum = 0.0_f32;
+            for qi in 0..q {
+                sum += b[qi * p + pi] * u[qi];
+            }
+            v[pi] = sum;
+            pi += 1;
+        }
+    } else {
+        for qi in 0..q {
+            let row = b.as_ptr().add(qi * p);
+            let mut acc = _mm256_setzero_ps();
+            let mut pi = 0;
+            while pi + 8 <= p {
+                let row_v = _mm256_loadu_ps(row.add(pi));
+                let u_v = _mm256_loadu_ps(u.as_ptr().add(pi));
+                acc = _mm256_fmadd_ps(row_v, u_v, acc);
+                pi += 8;
+            }
+            let mut sum = hsum_ps(acc);
+            while pi < p {
+                sum += *row.add(pi) * u[pi];
+                pi += 1;
+            }
+            v[qi] = sum;
+        }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2", enable = "fma")]
+unsafe fn tensor_contract_f32_avx2_accumulate(
+    b: &[f32],
+    u: &[f32],
+    v: &mut [f32],
+    q: usize,
+    p: usize,
+    transpose: bool,
+) {
+    use std::arch::x86_64::{
+        __m256, _mm_add_ps, _mm_cvtss_f32, _mm256_add_ps, _mm256_broadcast_ss,
+        _mm256_castps256_ps128, _mm256_extractf128_ps, _mm256_fmadd_ps, _mm256_loadu_ps,
+        _mm256_setzero_ps, _mm256_storeu_ps, _mm_movehl_ps, _mm_shuffle_ps,
+    };
+
+    #[inline]
+    unsafe fn hsum_ps(sum: __m256) -> f32 {
+        let lo = _mm256_castps256_ps128(sum);
+        let hi = _mm256_extractf128_ps(sum, 1);
+        let pair = _mm_add_ps(lo, hi);
+        let shuffled = _mm_movehl_ps(pair, pair);
+        let sum = _mm_add_ps(pair, shuffled);
+        let shuffled2 = _mm_shuffle_ps(sum, sum, 1);
+        _mm_cvtss_f32(_mm_add_ps(sum, shuffled2))
+    }
+
+    if transpose {
+        let mut pi = 0;
+        while pi + 8 <= p {
+            let mut acc = _mm256_setzero_ps();
+            for qi in 0..q {
+                let coeff = _mm256_broadcast_ss(&*u.as_ptr().add(qi));
+                let row = _mm256_loadu_ps(b.as_ptr().add(qi * p + pi));
+                acc = _mm256_fmadd_ps(coeff, row, acc);
+            }
+            let cur = _mm256_loadu_ps(v.as_ptr().add(pi));
+            _mm256_storeu_ps(v.as_mut_ptr().add(pi), _mm256_add_ps(cur, acc));
+            pi += 8;
+        }
+        while pi < p {
+            let mut sum = 0.0_f32;
+            for qi in 0..q {
+                sum += b[qi * p + pi] * u[qi];
+            }
+            v[pi] += sum;
+            pi += 1;
+        }
+    } else {
+        for qi in 0..q {
+            let row = b.as_ptr().add(qi * p);
+            let mut acc = _mm256_setzero_ps();
+            let mut pi = 0;
+            while pi + 8 <= p {
+                let row_v = _mm256_loadu_ps(row.add(pi));
+                let u_v = _mm256_loadu_ps(u.as_ptr().add(pi));
+                acc = _mm256_fmadd_ps(row_v, u_v, acc);
+                pi += 8;
+            }
+            let mut sum = hsum_ps(acc);
+            while pi < p {
+                sum += *row.add(pi) * u[pi];
+                pi += 1;
+            }
+            v[qi] += sum;
+        }
+    }
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -937,6 +1173,11 @@ pub fn tensor_contract_accumulate_strided<T: Scalar>(
     p: usize,
     transpose: bool,
 ) {
+    // Try f32 SIMD first (8-wide vectors)
+    if try_tensor_contract_accumulate_simd_f32(b, u, u_stride, v, v_stride, q, p, transpose) {
+        return;
+    }
+    // Fall back to f64 SIMD (4-wide vectors)
     if try_tensor_contract_accumulate_simd_f64(b, u, u_stride, v, v_stride, q, p, transpose) {
         return;
     }
