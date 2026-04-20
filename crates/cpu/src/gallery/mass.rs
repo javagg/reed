@@ -43,7 +43,7 @@ impl QFunctionTrait<f64> for Mass1DBuild {
         &self.outputs
     }
 
-    fn apply(&self, q: usize, inputs: &[&[f64]], outputs: &mut [&mut [f64]]) -> ReedResult<()> {
+    fn apply(&self, _ctx: &[u8], q: usize, inputs: &[&[f64]], outputs: &mut [&mut [f64]]) -> ReedResult<()> {
         if inputs.len() != 2 || outputs.len() != 1 {
             return Err(ReedError::QFunction(
                 "Mass1DBuild expects 2 inputs and 1 output".into(),
@@ -107,7 +107,7 @@ impl QFunctionTrait<f64> for Mass2DBuild {
         &self.outputs
     }
 
-    fn apply(&self, q: usize, inputs: &[&[f64]], outputs: &mut [&mut [f64]]) -> ReedResult<()> {
+    fn apply(&self, _ctx: &[u8], q: usize, inputs: &[&[f64]], outputs: &mut [&mut [f64]]) -> ReedResult<()> {
         if inputs.len() != 2 || outputs.len() != 1 {
             return Err(ReedError::QFunction(
                 "Mass2DBuild expects 2 inputs and 1 output".into(),
@@ -161,7 +161,7 @@ impl QFunctionTrait<f64> for Mass3DBuild {
         &self.outputs
     }
 
-    fn apply(&self, q: usize, inputs: &[&[f64]], outputs: &mut [&mut [f64]]) -> ReedResult<()> {
+    fn apply(&self, _ctx: &[u8], q: usize, inputs: &[&[f64]], outputs: &mut [&mut [f64]]) -> ReedResult<()> {
         if inputs.len() != 2 || outputs.len() != 1 {
             return Err(ReedError::QFunction(
                 "Mass3DBuild expects 2 inputs and 1 output".into(),
@@ -223,7 +223,7 @@ impl QFunctionTrait<f64> for MassApply {
         &self.outputs
     }
 
-    fn apply(&self, q: usize, inputs: &[&[f64]], outputs: &mut [&mut [f64]]) -> ReedResult<()> {
+    fn apply(&self, _ctx: &[u8], q: usize, inputs: &[&[f64]], outputs: &mut [&mut [f64]]) -> ReedResult<()> {
         if inputs.len() != 2 || outputs.len() != 1 {
             return Err(ReedError::QFunction(
                 "MassApply expects 2 inputs and 1 output".into(),

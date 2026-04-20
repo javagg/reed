@@ -1,4 +1,8 @@
-use reed::{EvalMode, FieldVector, OperatorTrait, QFunctionField, QuadMode, Reed, TransposeMode};
+use reed::{
+    EvalMode, FieldVector, OperatorTrait, QFunctionContext, QFunctionField, QuadMode, Reed,
+};
+#[cfg(feature = "wgpu-backend")]
+use reed::TransposeMode;
 
 fn build_poisson_qdata(node_coords: &[f64], qweights: &[f64]) -> Vec<f64> {
     let q = qweights.len();
@@ -183,7 +187,8 @@ fn test_custom_closure_qfunction_apply() {
                 num_comp: 1,
                 eval_mode: EvalMode::Interp,
             }],
-            Box::new(|q, inputs, outputs| {
+            0,
+            Box::new(|_ctx, q, inputs, outputs| {
                 let u = inputs[0];
                 let qdata = inputs[1];
                 let v = &mut outputs[0];
@@ -259,17 +264,27 @@ fn test_wgpu_elem_restriction_no_transpose_offset_f32() {
 
 #[cfg(feature = "wgpu-backend")]
 #[test]
-fn test_wgpu_elem_restriction_transpose_fallback() {
-    let reed = Reed::<f32>::init("/gpu/wgpu").unwrap();
-    let r = reed
+fn test_wgpu_elem_restriction_transpose_offset_matches_cpu() {
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let r_cpu = reed_cpu
+        .elem_restriction(2, 2, 1, 1, 3, &[0, 1, 1, 2])
+        .unwrap();
+    let r_gpu = reed_gpu
         .elem_restriction(2, 2, 1, 1, 3, &[0, 1, 1, 2])
         .unwrap();
 
     let local = vec![10.0_f32, 20.0, 20.0, 30.0];
-    let mut gathered = vec![0.0_f32; 3];
-    r.apply(TransposeMode::Transpose, &local, &mut gathered)
+    let mut g_cpu = vec![0.0_f32; 3];
+    let mut g_gpu = vec![0.0_f32; 3];
+    r_cpu
+        .apply(TransposeMode::Transpose, &local, &mut g_cpu)
         .unwrap();
-    assert_eq!(gathered, vec![10.0_f32, 40.0, 30.0]);
+    r_gpu
+        .apply(TransposeMode::Transpose, &local, &mut g_gpu)
+        .unwrap();
+    assert_eq!(g_cpu, g_gpu);
+    assert_eq!(g_cpu, vec![10.0_f32, 40.0, 30.0]);
 }
 
 #[cfg(feature = "wgpu-backend")]
@@ -300,6 +315,420 @@ fn test_wgpu_basis_interp_matches_cpu() {
     for (a, b) in v_cpu.iter().zip(v_gpu.iter()) {
         assert!((a - b).abs() < 1.0e-5);
     }
+}
+
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_basis_grad_matches_cpu() {
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+
+    let b_cpu = reed_cpu
+        .basis_tensor_h1_lagrange(1, 1, 3, 4, QuadMode::Gauss)
+        .unwrap();
+    let b_gpu = reed_gpu
+        .basis_tensor_h1_lagrange(1, 1, 3, 4, QuadMode::Gauss)
+        .unwrap();
+    let dim = b_cpu.dim();
+
+    let num_elem = 2usize;
+    let u = vec![0.0_f32, 1.0, 2.0, 1.5, -0.5, 0.25];
+    let mut v_cpu = vec![0.0_f32; num_elem * b_cpu.num_qpoints() * b_cpu.num_comp() * dim];
+    let mut v_gpu = vec![0.0_f32; num_elem * b_gpu.num_qpoints() * b_gpu.num_comp() * dim];
+
+    b_cpu
+        .apply(num_elem, false, EvalMode::Grad, &u, &mut v_cpu)
+        .unwrap();
+    b_gpu
+        .apply(num_elem, false, EvalMode::Grad, &u, &mut v_gpu)
+        .unwrap();
+
+    for (a, b) in v_cpu.iter().zip(v_gpu.iter()) {
+        assert!((a - b).abs() < 1.0e-4);
+    }
+}
+
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_basis_grad_transpose_matches_cpu() {
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+
+    let b_cpu = reed_cpu
+        .basis_tensor_h1_lagrange(1, 1, 3, 4, QuadMode::Gauss)
+        .unwrap();
+    let b_gpu = reed_gpu
+        .basis_tensor_h1_lagrange(1, 1, 3, 4, QuadMode::Gauss)
+        .unwrap();
+
+    let num_elem = 2usize;
+    let u = vec![0.5_f32, -0.25, 1.0, 2.0, -1.0, 0.75, 0.25, -0.5];
+    let mut v_cpu = vec![0.0_f32; num_elem * b_cpu.num_dof() * b_cpu.num_comp()];
+    let mut v_gpu = vec![0.0_f32; num_elem * b_gpu.num_dof() * b_gpu.num_comp()];
+
+    b_cpu
+        .apply(num_elem, true, EvalMode::Grad, &u, &mut v_cpu)
+        .unwrap();
+    b_gpu
+        .apply(num_elem, true, EvalMode::Grad, &u, &mut v_gpu)
+        .unwrap();
+
+    for (a, b) in v_cpu.iter().zip(v_gpu.iter()) {
+        assert!((a - b).abs() < 1.0e-4);
+    }
+}
+
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_basis_grad_matches_cpu_2d_scalar() {
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+
+    let b_cpu = reed_cpu
+        .basis_tensor_h1_lagrange(2, 1, 3, 4, QuadMode::Gauss)
+        .unwrap();
+    let b_gpu = reed_gpu
+        .basis_tensor_h1_lagrange(2, 1, 3, 4, QuadMode::Gauss)
+        .unwrap();
+    let dim = b_cpu.dim();
+
+    let num_elem = 2usize;
+    let u = (0..num_elem * b_cpu.num_dof())
+        .map(|i| (i as f32) * 0.11 - 0.4)
+        .collect::<Vec<_>>();
+    let mut v_cpu = vec![0.0_f32; num_elem * b_cpu.num_qpoints() * dim];
+    let mut v_gpu = vec![0.0_f32; num_elem * b_gpu.num_qpoints() * dim];
+
+    b_cpu
+        .apply(num_elem, false, EvalMode::Grad, &u, &mut v_cpu)
+        .unwrap();
+    b_gpu
+        .apply(num_elem, false, EvalMode::Grad, &u, &mut v_gpu)
+        .unwrap();
+
+    for (a, b) in v_cpu.iter().zip(v_gpu.iter()) {
+        assert!((a - b).abs() < 1.0e-4, "cpu={a} gpu={b}");
+    }
+}
+
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_basis_grad_transpose_matches_cpu_2d_scalar() {
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+
+    let b_cpu = reed_cpu
+        .basis_tensor_h1_lagrange(2, 1, 3, 4, QuadMode::Gauss)
+        .unwrap();
+    let b_gpu = reed_gpu
+        .basis_tensor_h1_lagrange(2, 1, 3, 4, QuadMode::Gauss)
+        .unwrap();
+
+    let num_elem = 2usize;
+    let nq = b_cpu.num_qpoints();
+    let u = (0..num_elem * nq * 2)
+        .map(|i| (i as f32) * 0.02 - 0.5)
+        .collect::<Vec<_>>();
+    let mut v_cpu = vec![0.0_f32; num_elem * b_cpu.num_dof()];
+    let mut v_gpu = vec![0.0_f32; num_elem * b_gpu.num_dof()];
+
+    b_cpu
+        .apply(num_elem, true, EvalMode::Grad, &u, &mut v_cpu)
+        .unwrap();
+    b_gpu
+        .apply(num_elem, true, EvalMode::Grad, &u, &mut v_gpu)
+        .unwrap();
+
+    for (a, b) in v_cpu.iter().zip(v_gpu.iter()) {
+        assert!((a - b).abs() < 1.0e-4, "cpu={a} gpu={b}");
+    }
+}
+
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_basis_grad_matches_cpu_2d_vector() {
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+
+    let b_cpu = reed_cpu
+        .basis_tensor_h1_lagrange(2, 2, 3, 4, QuadMode::Gauss)
+        .unwrap();
+    let b_gpu = reed_gpu
+        .basis_tensor_h1_lagrange(2, 2, 3, 4, QuadMode::Gauss)
+        .unwrap();
+    let dim = b_cpu.dim();
+
+    let num_elem = 2usize;
+    let u = (0..num_elem * b_cpu.num_dof() * 2)
+        .map(|i| (i as f32) * 0.07 - 1.0)
+        .collect::<Vec<_>>();
+    let mut v_cpu = vec![0.0_f32; num_elem * b_cpu.num_qpoints() * 2 * dim];
+    let mut v_gpu = vec![0.0_f32; num_elem * b_gpu.num_qpoints() * 2 * dim];
+
+    b_cpu
+        .apply(num_elem, false, EvalMode::Grad, &u, &mut v_cpu)
+        .unwrap();
+    b_gpu
+        .apply(num_elem, false, EvalMode::Grad, &u, &mut v_gpu)
+        .unwrap();
+
+    for (a, b) in v_cpu.iter().zip(v_gpu.iter()) {
+        assert!((a - b).abs() < 1.0e-4, "cpu={a} gpu={b}");
+    }
+}
+
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_basis_grad_transpose_matches_cpu_2d_vector() {
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+
+    let b_cpu = reed_cpu
+        .basis_tensor_h1_lagrange(2, 2, 3, 4, QuadMode::Gauss)
+        .unwrap();
+    let b_gpu = reed_gpu
+        .basis_tensor_h1_lagrange(2, 2, 3, 4, QuadMode::Gauss)
+        .unwrap();
+
+    let num_elem = 2usize;
+    let nq = b_cpu.num_qpoints();
+    let qcomp = 2 * 2;
+    let u = (0..num_elem * nq * qcomp)
+        .map(|i| (i as f32) * 0.01 - 0.3)
+        .collect::<Vec<_>>();
+    let mut v_cpu = vec![0.0_f32; num_elem * b_cpu.num_dof() * 2];
+    let mut v_gpu = vec![0.0_f32; num_elem * b_gpu.num_dof() * 2];
+
+    b_cpu
+        .apply(num_elem, true, EvalMode::Grad, &u, &mut v_cpu)
+        .unwrap();
+    b_gpu
+        .apply(num_elem, true, EvalMode::Grad, &u, &mut v_gpu)
+        .unwrap();
+
+    for (a, b) in v_cpu.iter().zip(v_gpu.iter()) {
+        assert!((a - b).abs() < 2.0e-4, "cpu={a} gpu={b}");
+    }
+}
+
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_basis_div_matches_cpu_2d() {
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let b_cpu = reed_cpu
+        .basis_tensor_h1_lagrange(2, 2, 3, 4, QuadMode::Gauss)
+        .unwrap();
+    let b_gpu = reed_gpu
+        .basis_tensor_h1_lagrange(2, 2, 3, 4, QuadMode::Gauss)
+        .unwrap();
+    let ne = 2usize;
+    let u = vec![0.1_f32; ne * b_cpu.num_dof() * 2];
+    let mut v_cpu = vec![0.0_f32; ne * b_cpu.num_qpoints()];
+    let mut v_gpu = vec![0.0_f32; ne * b_gpu.num_qpoints()];
+    b_cpu
+        .apply(ne, false, EvalMode::Div, &u, &mut v_cpu)
+        .unwrap();
+    b_gpu
+        .apply(ne, false, EvalMode::Div, &u, &mut v_gpu)
+        .unwrap();
+    for (a, b) in v_cpu.iter().zip(v_gpu.iter()) {
+        assert!((a - b).abs() < 2.0e-4, "cpu={a} gpu={b}");
+    }
+}
+
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_basis_div_transpose_matches_cpu_2d() {
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let b_cpu = reed_cpu
+        .basis_tensor_h1_lagrange(2, 2, 3, 4, QuadMode::Gauss)
+        .unwrap();
+    let b_gpu = reed_gpu
+        .basis_tensor_h1_lagrange(2, 2, 3, 4, QuadMode::Gauss)
+        .unwrap();
+    let ne = 2usize;
+    let u = (0..ne * b_cpu.num_qpoints())
+        .map(|i| (i as f32) * 0.03 - 0.5)
+        .collect::<Vec<_>>();
+    let mut v_cpu = vec![0.0_f32; ne * b_cpu.num_dof() * 2];
+    let mut v_gpu = vec![0.0_f32; ne * b_gpu.num_dof() * 2];
+    b_cpu
+        .apply(ne, true, EvalMode::Div, &u, &mut v_cpu)
+        .unwrap();
+    b_gpu
+        .apply(ne, true, EvalMode::Div, &u, &mut v_gpu)
+        .unwrap();
+    for (a, b) in v_cpu.iter().zip(v_gpu.iter()) {
+        assert!((a - b).abs() < 2.0e-4, "cpu={a} gpu={b}");
+    }
+}
+
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_basis_curl2d_transpose_matches_cpu() {
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let b_cpu = reed_cpu
+        .basis_tensor_h1_lagrange(2, 2, 3, 4, QuadMode::Gauss)
+        .unwrap();
+    let b_gpu = reed_gpu
+        .basis_tensor_h1_lagrange(2, 2, 3, 4, QuadMode::Gauss)
+        .unwrap();
+    let ne = 2usize;
+    let u = (0..ne * b_cpu.num_qpoints())
+        .map(|i| (i as f32) * 0.04 - 0.2)
+        .collect::<Vec<_>>();
+    let mut v_cpu = vec![0.0_f32; ne * b_cpu.num_dof() * 2];
+    let mut v_gpu = vec![0.0_f32; ne * b_gpu.num_dof() * 2];
+    b_cpu
+        .apply(ne, true, EvalMode::Curl, &u, &mut v_cpu)
+        .unwrap();
+    b_gpu
+        .apply(ne, true, EvalMode::Curl, &u, &mut v_gpu)
+        .unwrap();
+    for (a, b) in v_cpu.iter().zip(v_gpu.iter()) {
+        assert!((a - b).abs() < 2.0e-4, "cpu={a} gpu={b}");
+    }
+}
+
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_basis_curl3d_transpose_matches_cpu() {
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let b_cpu = reed_cpu
+        .basis_tensor_h1_lagrange(3, 3, 3, 4, QuadMode::Gauss)
+        .unwrap();
+    let b_gpu = reed_gpu
+        .basis_tensor_h1_lagrange(3, 3, 3, 4, QuadMode::Gauss)
+        .unwrap();
+    let ne = 2usize;
+    let u = (0..ne * b_cpu.num_qpoints() * 3)
+        .map(|i| (i as f32) * 0.02 - 0.35)
+        .collect::<Vec<_>>();
+    let mut v_cpu = vec![0.0_f32; ne * b_cpu.num_dof() * 3];
+    let mut v_gpu = vec![0.0_f32; ne * b_gpu.num_dof() * 3];
+    b_cpu
+        .apply(ne, true, EvalMode::Curl, &u, &mut v_cpu)
+        .unwrap();
+    b_gpu
+        .apply(ne, true, EvalMode::Curl, &u, &mut v_gpu)
+        .unwrap();
+    for (a, b) in v_cpu.iter().zip(v_gpu.iter()) {
+        assert!((a - b).abs() < 2.0e-4, "cpu={a} gpu={b}");
+    }
+}
+
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_basis_curl2d_matches_cpu() {
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let b_cpu = reed_cpu
+        .basis_tensor_h1_lagrange(2, 2, 3, 4, QuadMode::Gauss)
+        .unwrap();
+    let b_gpu = reed_gpu
+        .basis_tensor_h1_lagrange(2, 2, 3, 4, QuadMode::Gauss)
+        .unwrap();
+    let ne = 2usize;
+    let u = vec![0.12_f32; ne * b_cpu.num_dof() * 2];
+    let mut v_cpu = vec![0.0_f32; ne * b_cpu.num_qpoints()];
+    let mut v_gpu = vec![0.0_f32; ne * b_gpu.num_qpoints()];
+    b_cpu
+        .apply(ne, false, EvalMode::Curl, &u, &mut v_cpu)
+        .unwrap();
+    b_gpu
+        .apply(ne, false, EvalMode::Curl, &u, &mut v_gpu)
+        .unwrap();
+    for (a, b) in v_cpu.iter().zip(v_gpu.iter()) {
+        assert!((a - b).abs() < 2.0e-4, "cpu={a} gpu={b}");
+    }
+}
+
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_basis_curl3d_matches_cpu() {
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let b_cpu = reed_cpu
+        .basis_tensor_h1_lagrange(3, 3, 2, 3, QuadMode::Gauss)
+        .unwrap();
+    let b_gpu = reed_gpu
+        .basis_tensor_h1_lagrange(3, 3, 2, 3, QuadMode::Gauss)
+        .unwrap();
+    let ne = 2usize;
+    let u = vec![0.07_f32; ne * b_cpu.num_dof() * 3];
+    let mut v_cpu = vec![0.0_f32; ne * b_cpu.num_qpoints() * 3];
+    let mut v_gpu = vec![0.0_f32; ne * b_gpu.num_qpoints() * 3];
+    b_cpu
+        .apply(ne, false, EvalMode::Curl, &u, &mut v_cpu)
+        .unwrap();
+    b_gpu
+        .apply(ne, false, EvalMode::Curl, &u, &mut v_gpu)
+        .unwrap();
+    for (a, b) in v_cpu.iter().zip(v_gpu.iter()) {
+        assert!((a - b).abs() < 2.0e-4, "cpu={a} gpu={b}");
+    }
+}
+
+#[test]
+fn test_qfunction_context_applies_in_closure() {
+    let reed = Reed::<f64>::init("/cpu/self").unwrap();
+    let mut ctx = QFunctionContext::new(8);
+    ctx.write_f64_le(0, 3.0).unwrap();
+    let qf = reed
+        .q_function_interior(
+            1,
+            vec![QFunctionField {
+                name: "x".into(),
+                num_comp: 1,
+                eval_mode: EvalMode::Interp,
+            }],
+            vec![QFunctionField {
+                name: "y".into(),
+                num_comp: 1,
+                eval_mode: EvalMode::Interp,
+            }],
+            8,
+            Box::new(|ctx_b, q, inputs, outputs| {
+                let scale = f64::from_le_bytes(ctx_b[0..8].try_into().unwrap());
+                for i in 0..q {
+                    outputs[0][i] = scale * inputs[0][i];
+                }
+                Ok(())
+            }),
+        )
+        .unwrap();
+    let mut out = vec![0.0_f64; 4];
+    let inp = vec![1.0_f64; 4];
+    qf.apply(ctx.as_bytes(), 4, &[inp.as_slice()], &mut [&mut out])
+        .unwrap();
+    assert_eq!(out, vec![3.0; 4]);
+}
+
+#[test]
+fn test_lagrange_vector_div_curl_smoke() {
+    let reed = Reed::<f64>::init("/cpu/self").unwrap();
+    let ne = 2usize;
+    let b2 = reed
+        .basis_tensor_h1_lagrange(2, 2, 3, 4, QuadMode::Gauss)
+        .unwrap();
+    let u2 = vec![0.5_f64; ne * b2.num_dof() * 2];
+    let mut div2 = vec![0.0_f64; ne * b2.num_qpoints()];
+    let mut curl2 = vec![0.0_f64; ne * b2.num_qpoints()];
+    b2.apply(ne, false, EvalMode::Div, &u2, &mut div2).unwrap();
+    b2.apply(ne, false, EvalMode::Curl, &u2, &mut curl2).unwrap();
+
+    let b3 = reed
+        .basis_tensor_h1_lagrange(3, 3, 3, 4, QuadMode::Gauss)
+        .unwrap();
+    let u3 = vec![0.5_f64; ne * b3.num_dof() * 3];
+    let mut div3 = vec![0.0_f64; ne * b3.num_qpoints()];
+    let mut curl3 = vec![0.0_f64; ne * b3.num_qpoints() * 3];
+    b3.apply(ne, false, EvalMode::Div, &u3, &mut div3).unwrap();
+    b3.apply(ne, false, EvalMode::Curl, &u3, &mut curl3).unwrap();
 }
 
 #[cfg(feature = "wgpu-backend")]

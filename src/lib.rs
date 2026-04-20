@@ -16,10 +16,10 @@
 
 pub use reed_core::{
     Backend, BasisTrait, ClosureQFunction, ElemRestrictionTrait, ElemTopology, EvalMode,
-    OperatorTrait, QFunctionClosure, QFunctionField, QFunctionTrait, QuadMode, ReedError,
-    ReedResult, Scalar, TransposeMode, VectorTrait,
+    OperatorTrait, QFunctionClosure, QFunctionContext, QFunctionField, QFunctionTrait, QuadMode,
+    ReedError, ReedResult, Scalar, TransposeMode, VectorTrait,
 };
-pub use reed_cpu::{q_function_by_name, CpuBackend, FieldVector, OperatorBuilder};
+pub use reed_cpu::{q_function_by_name, CompositeOperator, CpuBackend, FieldVector, OperatorBuilder};
 #[cfg(feature = "wgpu-backend")]
 pub use reed_wgpu::WgpuBackend;
 
@@ -193,6 +193,26 @@ impl<T: Scalar> Reed<T> {
             .strided_elem_restriction(nelem, elemsize, ncomp, lsize, strides)
     }
 
+    /// See [`reed_core::Reed::elem_restriction_at_points`].
+    pub fn elem_restriction_at_points(
+        &self,
+        nelem: usize,
+        npoints_per_elem: usize,
+        ncomp: usize,
+        compstride: usize,
+        lsize: usize,
+        offsets: &[i32],
+    ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>> {
+        self.inner.elem_restriction_at_points(
+            nelem,
+            npoints_per_elem,
+            ncomp,
+            compstride,
+            lsize,
+            offsets,
+        )
+    }
+
     pub fn basis_tensor_h1_lagrange(
         &self,
         dim: usize,
@@ -218,11 +238,21 @@ impl<T: Scalar> Reed<T> {
         OperatorBuilder::new()
     }
 
+    /// Build a composite operator `y = sum_i A_i x` (libCEED `CeedCompositeOperator`-style additive apply).
+    pub fn composite_operator(
+        &self,
+        ops: Vec<Box<dyn OperatorTrait<T>>>,
+    ) -> ReedResult<CompositeOperator<T>> {
+        let _ = self;
+        CompositeOperator::new(ops)
+    }
+
     pub fn q_function_interior(
         &self,
         vector_length: usize,
         inputs: Vec<QFunctionField>,
         outputs: Vec<QFunctionField>,
+        context_byte_len: usize,
         closure: Box<QFunctionClosure<T>>,
     ) -> ReedResult<Box<dyn QFunctionTrait<T>>> {
         let _ = self;
@@ -231,7 +261,12 @@ impl<T: Scalar> Reed<T> {
                 "qfunction vector_length must be greater than zero".into(),
             ));
         }
-        Ok(Box::new(ClosureQFunction::new(inputs, outputs, closure)))
+        Ok(Box::new(ClosureQFunction::new(
+            inputs,
+            outputs,
+            context_byte_len,
+            closure,
+        )))
     }
 }
 

@@ -53,7 +53,7 @@ impl QFunctionTrait<f64> for Poisson2DBuild {
         &self.outputs
     }
 
-    fn apply(&self, q: usize, inputs: &[&[f64]], outputs: &mut [&mut [f64]]) -> ReedResult<()> {
+    fn apply(&self, _ctx: &[u8], q: usize, inputs: &[&[f64]], outputs: &mut [&mut [f64]]) -> ReedResult<()> {
         if inputs.len() != 2 || outputs.len() != 1 {
             return Err(ReedError::QFunction(
                 "Poisson2DBuild expects 2 inputs and 1 output".into(),
@@ -137,7 +137,7 @@ impl QFunctionTrait<f64> for Poisson2DApply {
         &self.outputs
     }
 
-    fn apply(&self, q: usize, inputs: &[&[f64]], outputs: &mut [&mut [f64]]) -> ReedResult<()> {
+    fn apply(&self, _ctx: &[u8], q: usize, inputs: &[&[f64]], outputs: &mut [&mut [f64]]) -> ReedResult<()> {
         if inputs.len() != 2 || outputs.len() != 1 {
             return Err(ReedError::QFunction(
                 "Poisson2DApply expects 2 inputs and 1 output".into(),
@@ -193,7 +193,7 @@ impl QFunctionTrait<f64> for Poisson3DBuild {
         &self.outputs
     }
 
-    fn apply(&self, q: usize, inputs: &[&[f64]], outputs: &mut [&mut [f64]]) -> ReedResult<()> {
+    fn apply(&self, _ctx: &[u8], q: usize, inputs: &[&[f64]], outputs: &mut [&mut [f64]]) -> ReedResult<()> {
         if inputs.len() != 2 || outputs.len() != 1 {
             return Err(ReedError::QFunction(
                 "Poisson3DBuild expects 2 inputs and 1 output".into(),
@@ -288,7 +288,7 @@ impl QFunctionTrait<f64> for Poisson3DApply {
         &self.outputs
     }
 
-    fn apply(&self, q: usize, inputs: &[&[f64]], outputs: &mut [&mut [f64]]) -> ReedResult<()> {
+    fn apply(&self, _ctx: &[u8], q: usize, inputs: &[&[f64]], outputs: &mut [&mut [f64]]) -> ReedResult<()> {
         if inputs.len() != 2 || outputs.len() != 1 {
             return Err(ReedError::QFunction(
                 "Poisson3DApply expects 2 inputs and 1 output".into(),
@@ -352,7 +352,7 @@ impl QFunctionTrait<f64> for Poisson1DApply {
         &self.outputs
     }
 
-    fn apply(&self, q: usize, inputs: &[&[f64]], outputs: &mut [&mut [f64]]) -> ReedResult<()> {
+    fn apply(&self, _ctx: &[u8], q: usize, inputs: &[&[f64]], outputs: &mut [&mut [f64]]) -> ReedResult<()> {
         if inputs.len() != 2 || outputs.len() != 1 {
             return Err(ReedError::QFunction(
                 "Poisson1DApply expects 2 inputs and 1 output".into(),

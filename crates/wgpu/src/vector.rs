@@ -46,15 +46,6 @@ impl<T: Scalar> WgpuVector<T> {
         }
     }
 
-    fn as_f32_vec(data: &[T]) -> Option<Vec<f32>> {
-        // Fast path for f32: direct cast, no per-element conversion
-        if let Some(slice) = Self::as_f32_slice(data) {
-            return Some(slice.to_vec());
-        }
-        // Slow path: element-by-element conversion
-        data.iter().map(|v| NumCast::from(*v)).collect()
-    }
-
     fn from_f32_into(data: &mut [T], f32_data: &[f32]) -> ReedResult<()> {
         if data.len() != f32_data.len() {
             return Err(ReedError::Vector("size mismatch during gpu readback".into()));

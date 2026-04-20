@@ -137,11 +137,205 @@ fn bench_compare_basis_interp(c: &mut Criterion) {
 }
 
 #[cfg(feature = "wgpu-backend")]
+fn bench_compare_basis_grad(c: &mut Criterion) {
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let mut group = c.benchmark_group("compare_basis_grad");
+
+    for &(p, q, num_elem, transpose) in &[
+        (4usize, 6usize, 8_192usize, false),
+        (4usize, 6usize, 8_192usize, true),
+        (8usize, 10usize, 4_096usize, false),
+        (8usize, 10usize, 4_096usize, true),
+    ] {
+        for &(backend, reed) in &[("cpu", &reed_cpu), ("wgpu", &reed_gpu)] {
+            let basis = reed
+                .basis_tensor_h1_lagrange(1, 1, p, q, QuadMode::Gauss)
+                .unwrap();
+            let dim = basis.dim();
+            let input_len = if transpose {
+                num_elem * basis.num_qpoints() * dim
+            } else {
+                num_elem * basis.num_dof()
+            };
+            let output_len = if transpose {
+                num_elem * basis.num_dof()
+            } else {
+                num_elem * basis.num_qpoints() * dim
+            };
+            let input = (0..input_len)
+                .map(|index| ((index % 31) as f32 - 15.0) * 0.0625)
+                .collect::<Vec<_>>();
+            let mut output = vec![0.0_f32; output_len];
+            let case = if transpose {
+                format!("p{p}_q{q}_e{num_elem}_t")
+            } else {
+                format!("p{p}_q{q}_e{num_elem}_f")
+            };
+
+            group.bench_with_input(BenchmarkId::new(backend, case), &num_elem, |b, _| {
+                b.iter(|| {
+                    basis
+                        .apply(
+                            num_elem,
+                            transpose,
+                            EvalMode::Grad,
+                            black_box(&input),
+                            black_box(&mut output),
+                        )
+                        .unwrap();
+                });
+            });
+        }
+    }
+
+    group.finish();
+}
+
+#[cfg(feature = "wgpu-backend")]
+fn bench_compare_basis_grad_2d(c: &mut Criterion) {
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let mut group = c.benchmark_group("compare_basis_grad_2d");
+
+    for &(p, q, num_elem, transpose) in &[
+        (4usize, 6usize, 1_024usize, false),
+        (4usize, 6usize, 1_024usize, true),
+        (6usize, 8usize, 256usize, false),
+        (6usize, 8usize, 256usize, true),
+    ] {
+        for &(backend, reed) in &[("cpu", &reed_cpu), ("wgpu", &reed_gpu)] {
+            let basis = reed
+                .basis_tensor_h1_lagrange(2, 1, p, q, QuadMode::Gauss)
+                .unwrap();
+            let dim = basis.dim();
+            let input_len = if transpose {
+                num_elem * basis.num_qpoints() * dim
+            } else {
+                num_elem * basis.num_dof()
+            };
+            let output_len = if transpose {
+                num_elem * basis.num_dof()
+            } else {
+                num_elem * basis.num_qpoints() * dim
+            };
+            let input = (0..input_len)
+                .map(|index| ((index % 31) as f32 - 15.0) * 0.0625)
+                .collect::<Vec<_>>();
+            let mut output = vec![0.0_f32; output_len];
+            let case = if transpose {
+                format!("p{p}_q{q}_e{num_elem}_t")
+            } else {
+                format!("p{p}_q{q}_e{num_elem}_f")
+            };
+
+            group.bench_with_input(BenchmarkId::new(backend, case), &num_elem, |b, _| {
+                b.iter(|| {
+                    basis
+                        .apply(
+                            num_elem,
+                            transpose,
+                            EvalMode::Grad,
+                            black_box(&input),
+                            black_box(&mut output),
+                        )
+                        .unwrap();
+                });
+            });
+        }
+    }
+
+    group.finish();
+}
+
+#[cfg(feature = "wgpu-backend")]
+fn bench_compare_basis_div_2d(c: &mut Criterion) {
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let mut group = c.benchmark_group("compare_basis_div_2d");
+
+    for &(p, q, num_elem) in &[(4usize, 6usize, 512usize), (6usize, 8usize, 256usize)] {
+        for &(backend, reed) in &[("cpu", &reed_cpu), ("wgpu", &reed_gpu)] {
+            let basis = reed
+                .basis_tensor_h1_lagrange(2, 2, p, q, QuadMode::Gauss)
+                .unwrap();
+            let input_len = num_elem * basis.num_dof() * 2;
+            let output_len = num_elem * basis.num_qpoints();
+            let input = (0..input_len)
+                .map(|index| ((index % 31) as f32 - 15.0) * 0.0625)
+                .collect::<Vec<_>>();
+            let mut output = vec![0.0_f32; output_len];
+            let case = format!("p{p}_q{q}_e{num_elem}");
+
+            group.bench_with_input(BenchmarkId::new(backend, case), &num_elem, |b, _| {
+                b.iter(|| {
+                    basis
+                        .apply(
+                            num_elem,
+                            false,
+                            EvalMode::Div,
+                            black_box(&input),
+                            black_box(&mut output),
+                        )
+                        .unwrap();
+                });
+            });
+        }
+    }
+
+    group.finish();
+}
+
+#[cfg(feature = "wgpu-backend")]
+fn bench_compare_restriction_transpose(c: &mut Criterion) {
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let mut group = c.benchmark_group("compare_restriction_transpose");
+
+    for &(nelem, elemsize) in &[(16_384usize, 4usize), (32_768, 8)] {
+        let lsize = nelem * (elemsize - 1) + 1;
+        let offsets = build_offsets_1d(nelem, elemsize);
+        let local_len = nelem * elemsize;
+        for &(backend, reed) in &[("cpu", &reed_cpu), ("wgpu", &reed_gpu)] {
+            let restriction = reed
+                .elem_restriction(nelem, elemsize, 1, 1, lsize, &offsets)
+                .unwrap();
+            let local = (0..local_len)
+                .map(|index| ((index % 31) as f32 - 15.0) * 0.0625)
+                .collect::<Vec<_>>();
+            let mut global = vec![0.0_f32; lsize];
+            group.bench_with_input(
+                BenchmarkId::new(backend, format!("{nelem}x{elemsize}")),
+                &(nelem, elemsize),
+                |b, _| {
+                    b.iter(|| {
+                        global.fill(0.0);
+                        restriction
+                            .apply(
+                                TransposeMode::Transpose,
+                                black_box(&local),
+                                black_box(&mut global),
+                            )
+                            .unwrap();
+                    });
+                },
+            );
+        }
+    }
+
+    group.finish();
+}
+
+#[cfg(feature = "wgpu-backend")]
 criterion_group!(
     benches,
     bench_compare_vector_axpy,
     bench_compare_restriction,
-    bench_compare_basis_interp
+    bench_compare_restriction_transpose,
+    bench_compare_basis_interp,
+    bench_compare_basis_grad,
+    bench_compare_basis_grad_2d,
+    bench_compare_basis_div_2d
 );
 #[cfg(feature = "wgpu-backend")]
 criterion_main!(benches);

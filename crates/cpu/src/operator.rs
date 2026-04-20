@@ -7,7 +7,7 @@ use reed_core::{
     qfunction::QFunctionTrait,
     scalar::Scalar,
     vector::VectorTrait,
-    ReedError,
+    QFunctionContext, ReedError,
 };
 
 pub enum FieldVector<'a, T: Scalar> {
@@ -37,6 +37,7 @@ struct OutputPlan {
 
 pub struct OperatorBuilder<'a, T: Scalar> {
     qfunction: Option<Box<dyn QFunctionTrait<T>>>,
+    qfunction_context: Option<QFunctionContext>,
     fields: Vec<OperatorField<'a, T>>,
 }
 
@@ -44,6 +45,7 @@ impl<'a, T: Scalar> Default for OperatorBuilder<'a, T> {
     fn default() -> Self {
         Self {
             qfunction: None,
+            qfunction_context: None,
             fields: Vec::new(),
         }
     }
@@ -56,6 +58,13 @@ impl<'a, T: Scalar> OperatorBuilder<'a, T> {
 
     pub fn qfunction(mut self, qfunction: Box<dyn QFunctionTrait<T>>) -> Self {
         self.qfunction = Some(qfunction);
+        self
+    }
+
+    /// User [`QFunctionContext`] buffer; byte length must match
+    /// [`QFunctionTrait::context_byte_len`] of the configured qfunction (often zero).
+    pub fn qfunction_context(mut self, ctx: QFunctionContext) -> Self {
+        self.qfunction_context = Some(ctx);
         self
     }
 
@@ -79,6 +88,24 @@ impl<'a, T: Scalar> OperatorBuilder<'a, T> {
         let qfunction = self
             .qfunction
             .ok_or_else(|| ReedError::Operator("operator builder requires a qfunction".into()))?;
+        let ctx_need = qfunction.context_byte_len();
+        let qfunction_context = match (self.qfunction_context, ctx_need) {
+            (Some(c), need) if c.byte_len() != need => {
+                return Err(ReedError::Operator(format!(
+                    "QFunctionContext length {} does not match qfunction.context_byte_len() {}",
+                    c.byte_len(),
+                    need
+                )));
+            }
+            (Some(c), _) => c,
+            (None, 0) => QFunctionContext::new(0),
+            (None, need) => {
+                return Err(ReedError::Operator(format!(
+                    "qfunction requires {} byte(s) of QFunctionContext; call .qfunction_context(...)",
+                    need
+                )));
+            }
+        };
         let input_plans = qfunction
             .inputs()
             .iter()
@@ -132,6 +159,7 @@ impl<'a, T: Scalar> OperatorBuilder<'a, T> {
             })?;
         Ok(CpuOperator {
             qfunction,
+            qfunction_context,
             fields: self.fields,
             input_plans,
             output_plans,
@@ -145,6 +173,7 @@ impl<'a, T: Scalar> OperatorBuilder<'a, T> {
 
 pub struct CpuOperator<'a, T: Scalar> {
     qfunction: Box<dyn QFunctionTrait<T>>,
+    qfunction_context: QFunctionContext,
     fields: Vec<OperatorField<'a, T>>,
     input_plans: Vec<InputPlan>,
     output_plans: Vec<OutputPlan>,
@@ -183,10 +212,35 @@ impl<'a, T: Scalar> CpuOperator<'a, T> {
                 .basis
                 .map(|basis| basis.num_comp() * basis.dim())
                 .ok_or_else(|| ReedError::Operator(format!("field '{}' requires basis", field.name))),
-            other => Err(ReedError::Operator(format!(
-                "eval mode {:?} not implemented in operator sizing",
-                other
-            ))),
+            EvalMode::Div => {
+                let basis = field.basis.ok_or_else(|| {
+                    ReedError::Operator(format!("field '{}' requires basis for Div", field.name))
+                })?;
+                if basis.num_comp() != basis.dim() {
+                    return Err(ReedError::Operator(format!(
+                        "field '{}': EvalMode::Div requires basis.num_comp() == basis.dim() (vector field), got comp {} dim {}",
+                        field.name,
+                        basis.num_comp(),
+                        basis.dim()
+                    )));
+                }
+                Ok(1)
+            }
+            EvalMode::Curl => {
+                let basis = field.basis.ok_or_else(|| {
+                    ReedError::Operator(format!("field '{}' requires basis for Curl", field.name))
+                })?;
+                match (basis.dim(), basis.num_comp()) {
+                    (2, 2) => Ok(1),
+                    (3, 3) => Ok(3),
+                    _ => Err(ReedError::Operator(format!(
+                        "field '{}': EvalMode::Curl requires (dim, ncomp) = (2, 2) or (3, 3), got dim {} comp {}",
+                        field.name,
+                        basis.dim(),
+                        basis.num_comp()
+                    ))),
+                }
+            }
         }
     }
 
@@ -329,6 +383,7 @@ impl<'a, T: Scalar> CpuOperator<'a, T> {
         let input_slices = q_inputs.iter().map(Vec::as_slice).collect::<Vec<_>>();
         let mut output_slices = q_outputs.iter_mut().map(Vec::as_mut_slice).collect::<Vec<_>>();
         self.qfunction.apply(
+            self.qfunction_context.as_bytes(),
             self.num_elem * self.num_qpoints,
             &input_slices,
             &mut output_slices,

@@ -1,0 +1,616 @@
+//! libCEED-compatible gallery names and semantics (see libCEED `gallery/ceed-gallery-list.h`).
+//!
+//! Reed field layouts follow the same interleaved quadrature indexing as other gallery QFs.
+
+use reed_core::{
+    enums::EvalMode,
+    error::ReedResult,
+    qfunction::{QFunctionField, QFunctionTrait},
+    ReedError,
+};
+
+fn read_f64_le(ctx: &[u8]) -> f64 {
+    let b: [u8; 8] = ctx[0..8].try_into().unwrap_or([0u8; 8]);
+    f64::from_le_bytes(b)
+}
+
+// --- Identity -------------------------------------------------------------
+
+/// `"Identity"` — copy input quadrature values to output (same `num_comp` each side).
+#[derive(Clone)]
+pub struct Identity {
+    inputs: Vec<QFunctionField>,
+    outputs: Vec<QFunctionField>,
+}
+
+impl Identity {
+    pub fn with_components(ncomp: usize) -> Self {
+        Self {
+            inputs: vec![QFunctionField {
+                name: "input".into(),
+                num_comp: ncomp,
+                eval_mode: EvalMode::Interp,
+            }],
+            outputs: vec![QFunctionField {
+                name: "output".into(),
+                num_comp: ncomp,
+                eval_mode: EvalMode::Interp,
+            }],
+        }
+    }
+}
+
+impl Default for Identity {
+    fn default() -> Self {
+        Self::with_components(1)
+    }
+}
+
+impl QFunctionTrait<f64> for Identity {
+    fn inputs(&self) -> &[QFunctionField] {
+        &self.inputs
+    }
+
+    fn outputs(&self) -> &[QFunctionField] {
+        &self.outputs
+    }
+
+    fn apply(
+        &self,
+        _ctx: &[u8],
+        q: usize,
+        inputs: &[&[f64]],
+        outputs: &mut [&mut [f64]],
+    ) -> ReedResult<()> {
+        if inputs.len() != 1 || outputs.len() != 1 {
+            return Err(ReedError::QFunction(
+                "Identity expects 1 input and 1 output".into(),
+            ));
+        }
+        let u = inputs[0];
+        let v = &mut outputs[0];
+        if u.len() != v.len() {
+            return Err(ReedError::QFunction(
+                "Identity: input/output length mismatch".into(),
+            ));
+        }
+        let n = q * self.inputs[0].num_comp;
+        if u.len() != n {
+            return Err(ReedError::QFunction("Identity: unexpected buffer length".into()));
+        }
+        v.copy_from_slice(u);
+        Ok(())
+    }
+}
+
+/// `"Identity to scalar"` — keep the first component per quadrature point (`out[i] = in[i * ncomp]`).
+#[derive(Clone)]
+pub struct IdentityScalar {
+    inputs: Vec<QFunctionField>,
+    outputs: Vec<QFunctionField>,
+}
+
+impl IdentityScalar {
+    pub fn with_input_components(ncomp: usize) -> Self {
+        Self {
+            inputs: vec![QFunctionField {
+                name: "input".into(),
+                num_comp: ncomp,
+                eval_mode: EvalMode::Interp,
+            }],
+            outputs: vec![QFunctionField {
+                name: "output".into(),
+                num_comp: 1,
+                eval_mode: EvalMode::Interp,
+            }],
+        }
+    }
+}
+
+impl Default for IdentityScalar {
+    fn default() -> Self {
+        Self::with_input_components(3)
+    }
+}
+
+impl QFunctionTrait<f64> for IdentityScalar {
+    fn inputs(&self) -> &[QFunctionField] {
+        &self.inputs
+    }
+
+    fn outputs(&self) -> &[QFunctionField] {
+        &self.outputs
+    }
+
+    fn apply(
+        &self,
+        _ctx: &[u8],
+        q: usize,
+        inputs: &[&[f64]],
+        outputs: &mut [&mut [f64]],
+    ) -> ReedResult<()> {
+        if inputs.len() != 1 || outputs.len() != 1 {
+            return Err(ReedError::QFunction(
+                "IdentityScalar expects 1 input and 1 output".into(),
+            ));
+        }
+        let ncomp = self.inputs[0].num_comp;
+        let u = inputs[0];
+        let v = &mut outputs[0];
+        if u.len() != q * ncomp || v.len() != q {
+            return Err(ReedError::QFunction(
+                "IdentityScalar: buffer length mismatch".into(),
+            ));
+        }
+        for i in 0..q {
+            v[i] = u[i * ncomp];
+        }
+        Ok(())
+    }
+}
+
+// --- Scale ----------------------------------------------------------------
+
+/// `"Scale"` — multiply every input value by `alpha` from context (`f64` LE, 8 bytes).
+#[derive(Clone)]
+pub struct Scale {
+    inputs: Vec<QFunctionField>,
+    outputs: Vec<QFunctionField>,
+}
+
+impl Scale {
+    pub fn with_components(ncomp: usize) -> Self {
+        Self {
+            inputs: vec![QFunctionField {
+                name: "input".into(),
+                num_comp: ncomp,
+                eval_mode: EvalMode::Interp,
+            }],
+            outputs: vec![QFunctionField {
+                name: "output".into(),
+                num_comp: ncomp,
+                eval_mode: EvalMode::Interp,
+            }],
+        }
+    }
+}
+
+impl Default for Scale {
+    fn default() -> Self {
+        Self::with_components(1)
+    }
+}
+
+impl QFunctionTrait<f64> for Scale {
+    fn context_byte_len(&self) -> usize {
+        8
+    }
+
+    fn inputs(&self) -> &[QFunctionField] {
+        &self.inputs
+    }
+
+    fn outputs(&self) -> &[QFunctionField] {
+        &self.outputs
+    }
+
+    fn apply(
+        &self,
+        ctx: &[u8],
+        q: usize,
+        inputs: &[&[f64]],
+        outputs: &mut [&mut [f64]],
+    ) -> ReedResult<()> {
+        if ctx.len() < 8 {
+            return Err(ReedError::QFunction(
+                "Scale expects 8-byte context (f64 LE scale)".into(),
+            ));
+        }
+        if inputs.len() != 1 || outputs.len() != 1 {
+            return Err(ReedError::QFunction(
+                "Scale expects 1 input and 1 output".into(),
+            ));
+        }
+        let alpha = read_f64_le(ctx);
+        let ncomp = self.inputs[0].num_comp;
+        let u = inputs[0];
+        let v = &mut outputs[0];
+        if u.len() != q * ncomp || v.len() != q * ncomp {
+            return Err(ReedError::QFunction("Scale: buffer length mismatch".into()));
+        }
+        for i in 0..u.len() {
+            v[i] = alpha * u[i];
+        }
+        Ok(())
+    }
+}
+
+/// `"Scale (scalar)"` — same kernel as [`Scale`]; separate gallery name for libCEED parity.
+#[derive(Clone)]
+pub struct ScaleScalar {
+    inner: Scale,
+}
+
+impl Default for ScaleScalar {
+    fn default() -> Self {
+        Self {
+            inner: Scale::default(),
+        }
+    }
+}
+
+impl QFunctionTrait<f64> for ScaleScalar {
+    fn context_byte_len(&self) -> usize {
+        self.inner.context_byte_len()
+    }
+
+    fn inputs(&self) -> &[QFunctionField] {
+        self.inner.inputs()
+    }
+
+    fn outputs(&self) -> &[QFunctionField] {
+        self.inner.outputs()
+    }
+
+    fn apply(
+        &self,
+        ctx: &[u8],
+        q: usize,
+        inputs: &[&[f64]],
+        outputs: &mut [&mut [f64]],
+    ) -> ReedResult<()> {
+        self.inner.apply(ctx, q, inputs, outputs)
+    }
+}
+
+// --- Vector3 mass / Poisson -----------------------------------------------
+
+/// `"Vector3MassApply"` — `v[k] = qdata * u[k]` with three vector components at each quadrature point.
+#[derive(Clone, Default)]
+pub struct Vector3MassApply {
+    inputs: Vec<QFunctionField>,
+    outputs: Vec<QFunctionField>,
+}
+
+impl Vector3MassApply {
+    pub fn new() -> Self {
+        Self {
+            inputs: vec![
+                QFunctionField {
+                    name: "u".into(),
+                    num_comp: 3,
+                    eval_mode: EvalMode::Interp,
+                },
+                QFunctionField {
+                    name: "qdata".into(),
+                    num_comp: 1,
+                    eval_mode: EvalMode::None,
+                },
+            ],
+            outputs: vec![QFunctionField {
+                name: "v".into(),
+                num_comp: 3,
+                eval_mode: EvalMode::Interp,
+            }],
+        }
+    }
+}
+
+impl QFunctionTrait<f64> for Vector3MassApply {
+    fn inputs(&self) -> &[QFunctionField] {
+        &self.inputs
+    }
+
+    fn outputs(&self) -> &[QFunctionField] {
+        &self.outputs
+    }
+
+    fn apply(
+        &self,
+        _ctx: &[u8],
+        q: usize,
+        inputs: &[&[f64]],
+        outputs: &mut [&mut [f64]],
+    ) -> ReedResult<()> {
+        if inputs.len() != 2 || outputs.len() != 1 {
+            return Err(ReedError::QFunction(
+                "Vector3MassApply expects 2 inputs and 1 output".into(),
+            ));
+        }
+        let u = inputs[0];
+        let qdata = inputs[1];
+        let v = &mut outputs[0];
+        if qdata.len() != q || u.len() != q * 3 || v.len() != q * 3 {
+            return Err(ReedError::QFunction(
+                "Vector3MassApply: buffer length mismatch".into(),
+            ));
+        }
+        for i in 0..q {
+            let s = qdata[i];
+            v[i * 3] = s * u[i * 3];
+            v[i * 3 + 1] = s * u[i * 3 + 1];
+            v[i * 3 + 2] = s * u[i * 3 + 2];
+        }
+        Ok(())
+    }
+}
+
+/// `"Vector3Poisson1DApply"` — three independent scalar 1D Laplacian applies (same `qdata` as Poisson1D).
+#[derive(Clone, Default)]
+pub struct Vector3Poisson1DApply {
+    inputs: Vec<QFunctionField>,
+    outputs: Vec<QFunctionField>,
+}
+
+impl Vector3Poisson1DApply {
+    pub fn new() -> Self {
+        Self {
+            inputs: vec![
+                QFunctionField {
+                    name: "du".into(),
+                    num_comp: 3,
+                    eval_mode: EvalMode::Grad,
+                },
+                QFunctionField {
+                    name: "qdata".into(),
+                    num_comp: 1,
+                    eval_mode: EvalMode::None,
+                },
+            ],
+            outputs: vec![QFunctionField {
+                name: "dv".into(),
+                num_comp: 3,
+                eval_mode: EvalMode::Grad,
+            }],
+        }
+    }
+}
+
+impl QFunctionTrait<f64> for Vector3Poisson1DApply {
+    fn inputs(&self) -> &[QFunctionField] {
+        &self.inputs
+    }
+
+    fn outputs(&self) -> &[QFunctionField] {
+        &self.outputs
+    }
+
+    fn apply(
+        &self,
+        _ctx: &[u8],
+        q: usize,
+        inputs: &[&[f64]],
+        outputs: &mut [&mut [f64]],
+    ) -> ReedResult<()> {
+        if inputs.len() != 2 || outputs.len() != 1 {
+            return Err(ReedError::QFunction(
+                "Vector3Poisson1DApply expects 2 inputs and 1 output".into(),
+            ));
+        }
+        let du = inputs[0];
+        let qdata = inputs[1];
+        let dv = &mut outputs[0];
+        if qdata.len() != q || du.len() != q * 3 || dv.len() != q * 3 {
+            return Err(ReedError::QFunction(
+                "Vector3Poisson1DApply: buffer length mismatch".into(),
+            ));
+        }
+        for i in 0..q {
+            let g = qdata[i];
+            dv[i * 3] = g * du[i * 3];
+            dv[i * 3 + 1] = g * du[i * 3 + 1];
+            dv[i * 3 + 2] = g * du[i * 3 + 2];
+        }
+        Ok(())
+    }
+}
+
+/// `"Vector3Poisson2DApply"` — three stacked 2D Poisson gradient applies.
+///
+/// `qdata` uses the same **4** stiffness entries per point as `Poisson2DApply` / `Poisson2DBuild`.
+/// libCEED registers 3 symmetric components; Reed keeps 4 to match the existing scalar Poisson pipeline.
+#[derive(Clone, Default)]
+pub struct Vector3Poisson2DApply {
+    inputs: Vec<QFunctionField>,
+    outputs: Vec<QFunctionField>,
+}
+
+impl Vector3Poisson2DApply {
+    pub fn new() -> Self {
+        Self {
+            inputs: vec![
+                QFunctionField {
+                    name: "du".into(),
+                    num_comp: 6,
+                    eval_mode: EvalMode::Grad,
+                },
+                QFunctionField {
+                    name: "qdata".into(),
+                    num_comp: 4,
+                    eval_mode: EvalMode::None,
+                },
+            ],
+            outputs: vec![QFunctionField {
+                name: "dv".into(),
+                num_comp: 6,
+                eval_mode: EvalMode::Grad,
+            }],
+        }
+    }
+}
+
+impl QFunctionTrait<f64> for Vector3Poisson2DApply {
+    fn inputs(&self) -> &[QFunctionField] {
+        &self.inputs
+    }
+
+    fn outputs(&self) -> &[QFunctionField] {
+        &self.outputs
+    }
+
+    fn apply(
+        &self,
+        _ctx: &[u8],
+        q: usize,
+        inputs: &[&[f64]],
+        outputs: &mut [&mut [f64]],
+    ) -> ReedResult<()> {
+        if inputs.len() != 2 || outputs.len() != 1 {
+            return Err(ReedError::QFunction(
+                "Vector3Poisson2DApply expects 2 inputs and 1 output".into(),
+            ));
+        }
+        let du = inputs[0];
+        let qdata = inputs[1];
+        let dv = &mut outputs[0];
+        if qdata.len() != q * 4 || du.len() != q * 6 || dv.len() != q * 6 {
+            return Err(ReedError::QFunction(
+                "Vector3Poisson2DApply: buffer length mismatch".into(),
+            ));
+        }
+        for i in 0..q {
+            for c in 0..3 {
+                let base = c * 2;
+                let du0 = du[i * 6 + base];
+                let du1 = du[i * 6 + base + 1];
+                let g00 = qdata[i * 4];
+                let g01 = qdata[i * 4 + 1];
+                let g10 = qdata[i * 4 + 2];
+                let g11 = qdata[i * 4 + 3];
+                dv[i * 6 + base] = g00 * du0 + g01 * du1;
+                dv[i * 6 + base + 1] = g10 * du0 + g11 * du1;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// `"Vector3Poisson3DApply"` — three stacked 3D Poisson gradient applies (`qdata` 9 components, same as `Poisson3DApply`).
+#[derive(Clone, Default)]
+pub struct Vector3Poisson3DApply {
+    inputs: Vec<QFunctionField>,
+    outputs: Vec<QFunctionField>,
+}
+
+impl Vector3Poisson3DApply {
+    pub fn new() -> Self {
+        Self {
+            inputs: vec![
+                QFunctionField {
+                    name: "du".into(),
+                    num_comp: 9,
+                    eval_mode: EvalMode::Grad,
+                },
+                QFunctionField {
+                    name: "qdata".into(),
+                    num_comp: 9,
+                    eval_mode: EvalMode::None,
+                },
+            ],
+            outputs: vec![QFunctionField {
+                name: "dv".into(),
+                num_comp: 9,
+                eval_mode: EvalMode::Grad,
+            }],
+        }
+    }
+}
+
+impl QFunctionTrait<f64> for Vector3Poisson3DApply {
+    fn inputs(&self) -> &[QFunctionField] {
+        &self.inputs
+    }
+
+    fn outputs(&self) -> &[QFunctionField] {
+        &self.outputs
+    }
+
+    fn apply(
+        &self,
+        _ctx: &[u8],
+        q: usize,
+        inputs: &[&[f64]],
+        outputs: &mut [&mut [f64]],
+    ) -> ReedResult<()> {
+        if inputs.len() != 2 || outputs.len() != 1 {
+            return Err(ReedError::QFunction(
+                "Vector3Poisson3DApply expects 2 inputs and 1 output".into(),
+            ));
+        }
+        let du = inputs[0];
+        let qdata = inputs[1];
+        let dv = &mut outputs[0];
+        if qdata.len() != q * 9 || du.len() != q * 9 || dv.len() != q * 9 {
+            return Err(ReedError::QFunction(
+                "Vector3Poisson3DApply: buffer length mismatch".into(),
+            ));
+        }
+        for i in 0..q {
+            for c in 0..3 {
+                let base = c * 3;
+                let du0 = du[i * 9 + base];
+                let du1 = du[i * 9 + base + 1];
+                let du2 = du[i * 9 + base + 2];
+                let g00 = qdata[i * 9];
+                let g01 = qdata[i * 9 + 1];
+                let g02 = qdata[i * 9 + 2];
+                let g10 = qdata[i * 9 + 3];
+                let g11 = qdata[i * 9 + 4];
+                let g12 = qdata[i * 9 + 5];
+                let g20 = qdata[i * 9 + 6];
+                let g21 = qdata[i * 9 + 7];
+                let g22 = qdata[i * 9 + 8];
+                dv[i * 9 + base] = g00 * du0 + g01 * du1 + g02 * du2;
+                dv[i * 9 + base + 1] = g10 * du0 + g11 * du1 + g12 * du2;
+                dv[i * 9 + base + 2] = g20 * du0 + g21 * du1 + g22 * du2;
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use reed_core::qfunction::QFunctionTrait;
+
+    #[test]
+    fn identity_copies() {
+        let id = Identity::default();
+        let u = vec![1.0, 2.0, 3.0];
+        let mut v = vec![0.0; 3];
+        id.apply(&[], 3, &[u.as_slice()], &mut [&mut v]).unwrap();
+        assert_eq!(v, u);
+    }
+
+    #[test]
+    fn identity_scalar_first_component() {
+        let id = IdentityScalar::default();
+        // Two quadrature points, 3 components: v[i] = u[i*3].
+        let u = vec![1.0, 10.0, 11.0, 2.0, 20.0, 21.0];
+        let mut v = vec![0.0; 2];
+        id.apply(&[], 2, &[u.as_slice()], &mut [&mut v]).unwrap();
+        assert_eq!(v, vec![1.0, 2.0]);
+    }
+
+    #[test]
+    fn scale_uses_context() {
+        let sc = Scale::default();
+        let mut ctx = [0u8; 8];
+        ctx.copy_from_slice(&2.5f64.to_le_bytes());
+        let u = vec![1.0, 2.0];
+        let mut v = vec![0.0; 2];
+        sc.apply(&ctx, 2, &[u.as_slice()], &mut [&mut v]).unwrap();
+        assert_eq!(v, vec![2.5, 5.0]);
+    }
+
+    #[test]
+    fn vector3_mass_apply() {
+        let m = Vector3MassApply::new();
+        let u = vec![1.0, 2.0, 3.0, 1.0, 1.0, 1.0];
+        let qdata = vec![2.0, 3.0];
+        let mut v = vec![0.0; 6];
+        m.apply(&[], 2, &[&u, &qdata], &mut [&mut v]).unwrap();
+        assert_eq!(v, vec![2.0, 4.0, 6.0, 3.0, 3.0, 3.0]);
+    }
+}

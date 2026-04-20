@@ -1,5 +1,5 @@
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use reed::{EvalMode, FieldVector, OperatorTrait, QuadMode, Reed};
+use reed::{ElemTopology, EvalMode, FieldVector, OperatorTrait, QuadMode, Reed};
 
 struct ApplyScenario {
     input: &'static dyn reed::VectorTrait<f64>,
@@ -123,6 +123,32 @@ fn build_basis_data(len: usize) -> Vec<f64> {
         .collect()
 }
 
+fn basis_apply_buffer_sizes(
+    dim: usize,
+    ncomp: usize,
+    ne: usize,
+    nd: usize,
+    nq: usize,
+    transpose: bool,
+    eval_mode: EvalMode,
+) -> (usize, usize) {
+    match (eval_mode, transpose) {
+        (EvalMode::Interp, false) => (ne * nd * ncomp, ne * nq * ncomp),
+        (EvalMode::Interp, true) => (ne * nq * ncomp, ne * nd * ncomp),
+        (EvalMode::Grad, false) => (ne * nd * ncomp, ne * nq * ncomp * dim),
+        (EvalMode::Grad, true) => (ne * nq * ncomp * dim, ne * nd * ncomp),
+        (EvalMode::Div, false) => (ne * nd * ncomp, ne * nq),
+        (EvalMode::Div, true) => (ne * nq, ne * nd * ncomp),
+        (EvalMode::Curl, false) if dim == 2 && ncomp == 2 => (ne * nd * ncomp, ne * nq),
+        (EvalMode::Curl, true) if dim == 2 && ncomp == 2 => (ne * nq, ne * nd * ncomp),
+        (EvalMode::Curl, false) if dim == 3 && ncomp == 3 => (ne * nd * ncomp, ne * nq * 3),
+        (EvalMode::Curl, true) if dim == 3 && ncomp == 3 => (ne * nq * 3, ne * nd * ncomp),
+        _ => panic!(
+            "cpu_backend bench: unsupported (dim={dim}, ncomp={ncomp}, {eval_mode:?}, transpose={transpose})"
+        ),
+    }
+}
+
 fn build_basis_apply(
     dim: usize,
     ncomp: usize,
@@ -136,20 +162,42 @@ fn build_basis_apply(
     let basis = reed
         .basis_tensor_h1_lagrange(dim, ncomp, p, q, QuadMode::Gauss)
         .unwrap();
-    let qcomp = match eval_mode {
-        EvalMode::Grad => ncomp * dim,
-        _ => ncomp,
-    };
-    let input_len = if transpose {
-        num_elem * basis.num_qpoints() * qcomp
-    } else {
-        num_elem * basis.num_dof() * ncomp
-    };
-    let output_len = if transpose {
-        num_elem * basis.num_dof() * ncomp
-    } else {
-        num_elem * basis.num_qpoints() * qcomp
-    };
+    let ne = num_elem;
+    let nd = basis.num_dof();
+    let nq = basis.num_qpoints();
+    let d = basis.dim();
+    let (input_len, output_len) =
+        basis_apply_buffer_sizes(d, ncomp, ne, nd, nq, transpose, eval_mode);
+
+    BasisApplyScenario {
+        basis,
+        input: build_basis_data(input_len),
+        output: vec![0.0; output_len],
+        num_elem,
+        transpose,
+        eval_mode,
+    }
+}
+
+fn build_simplex_basis_apply(
+    topo: ElemTopology,
+    poly: usize,
+    ncomp: usize,
+    q: usize,
+    num_elem: usize,
+    transpose: bool,
+    eval_mode: EvalMode,
+) -> BasisApplyScenario {
+    let reed = Reed::<f64>::init("/cpu/self").unwrap();
+    let basis = reed
+        .basis_h1_simplex(topo, poly, ncomp, q)
+        .unwrap();
+    let ne = num_elem;
+    let nd = basis.num_dof();
+    let nq = basis.num_qpoints();
+    let d = basis.dim();
+    let (input_len, output_len) =
+        basis_apply_buffer_sizes(d, ncomp, ne, nd, nq, transpose, eval_mode);
 
     BasisApplyScenario {
         basis,
@@ -394,7 +442,8 @@ fn build_combined_apply(dim: usize, nelem_1d: usize, p: usize, q: usize) -> Appl
                     reed::QFunctionField { name: "v".into(), num_comp: 1, eval_mode: reed::EvalMode::Interp },
                     reed::QFunctionField { name: "dv".into(), num_comp: dim, eval_mode: reed::EvalMode::Grad },
                 ],
-                Box::new(move |q, inputs, outputs| {
+                0,
+                Box::new(move |_ctx, q, inputs, outputs| {
                     let u = inputs[0];
                     let qdata_mass = inputs[1];
                     let du = inputs[2];
@@ -530,8 +579,96 @@ fn bench_basis_apply(c: &mut Criterion) {
             );
         }
     }
+    for &(dim, num_elem, p, q) in &[(2, 1024, 4, 6), (3, 256, 4, 6)] {
+        let ncomp = dim;
+        for &(eval_mode, transpose, label) in &[
+            (EvalMode::Div, false, "div"),
+            (EvalMode::Div, true, "div_t"),
+            (EvalMode::Curl, false, "curl"),
+            (EvalMode::Curl, true, "curl_t"),
+        ] {
+            let mut scenario = build_basis_apply(dim, ncomp, p, q, num_elem, transpose, eval_mode);
+            group.bench_with_input(
+                BenchmarkId::new(label, format!("dim{dim}_elem{num_elem}_p{p}_q{q}")),
+                &(dim, num_elem, p, q, transpose),
+                |b, _| {
+                    b.iter(|| {
+                        scenario
+                            .basis
+                            .apply(
+                                scenario.num_elem,
+                                scenario.transpose,
+                                scenario.eval_mode,
+                                black_box(scenario.input.as_slice()),
+                                black_box(scenario.output.as_mut_slice()),
+                            )
+                            .unwrap();
+                    });
+                },
+            );
+        }
+    }
     group.finish();
 }
 
-criterion_group!(benches, bench_poisson_apply, bench_combined_apply, bench_basis_apply);
+fn bench_simplex_basis_apply(c: &mut Criterion) {
+    let mut group = c.benchmark_group("cpu_simplex_basis_apply");
+    // Triangle P2, q=6; Tet P2, q=5 (see basis_simplex docs)
+    for &(topo, poly, q, num_elem) in &[
+        (ElemTopology::Triangle, 2usize, 6usize, 2048usize),
+        (ElemTopology::Tet, 2usize, 5usize, 512usize),
+    ] {
+        for &(eval_mode, transpose, label) in &[
+            (EvalMode::Interp, false, "interp"),
+            (EvalMode::Interp, true, "interp_t"),
+            (EvalMode::Grad, false, "grad"),
+            (EvalMode::Grad, true, "grad_t"),
+        ] {
+            let mut scenario = build_simplex_basis_apply(
+                topo,
+                poly,
+                1,
+                q,
+                num_elem,
+                transpose,
+                eval_mode,
+            );
+            let topo_label = if topo == ElemTopology::Triangle {
+                "tri"
+            } else {
+                "tet"
+            };
+            group.bench_with_input(
+                BenchmarkId::new(
+                    label,
+                    format!("{topo_label}_p{poly}_q{q}_e{num_elem}"),
+                ),
+                &(poly, q, num_elem),
+                |b, _| {
+                    b.iter(|| {
+                        scenario
+                            .basis
+                            .apply(
+                                scenario.num_elem,
+                                scenario.transpose,
+                                scenario.eval_mode,
+                                black_box(scenario.input.as_slice()),
+                                black_box(scenario.output.as_mut_slice()),
+                            )
+                            .unwrap();
+                    });
+                },
+            );
+        }
+    }
+    group.finish();
+}
+
+criterion_group!(
+    benches,
+    bench_poisson_apply,
+    bench_combined_apply,
+    bench_basis_apply,
+    bench_simplex_basis_apply
+);
 criterion_main!(benches);

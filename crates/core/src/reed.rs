@@ -163,6 +163,32 @@ impl<T: Scalar> Reed<T> {
             .create_strided_elem_restriction(nelem, elemsize, ncomp, lsize, strides)
     }
 
+    /// Restriction with `elemsize = npoints_per_elem` (dofs indexed per quadrature point per element).
+    ///
+    /// Same implementation as [`Self::elem_restriction`]; aligns with libCEED
+    /// `CeedElemRestrictionCreateAtPoints` naming. `offsets.len()` must be `nelem * npoints_per_elem`.
+    pub fn elem_restriction_at_points(
+        &self,
+        nelem: usize,
+        npoints_per_elem: usize,
+        ncomp: usize,
+        compstride: usize,
+        lsize: usize,
+        offsets: &[i32],
+    ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>> {
+        let expected = nelem
+            .checked_mul(npoints_per_elem)
+            .ok_or_else(|| ReedError::InvalidArgument("elem_restriction_at_points: size overflow".into()))?;
+        if offsets.len() != expected {
+            return Err(ReedError::InvalidArgument(format!(
+                "elem_restriction_at_points: offsets.len() {} != nelem * npoints_per_elem ({})",
+                offsets.len(),
+                expected
+            )));
+        }
+        self.elem_restriction(nelem, npoints_per_elem, ncomp, compstride, lsize, offsets)
+    }
+
     // ── Basis 工厂 ──
 
     pub fn basis_tensor_h1_lagrange(

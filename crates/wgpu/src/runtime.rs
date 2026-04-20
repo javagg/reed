@@ -11,9 +11,14 @@ pub struct GpuRuntime {
     axpy_pipeline: wgpu::ComputePipeline,
     restriction_layout: wgpu::BindGroupLayout,
     restriction_pipeline: wgpu::ComputePipeline,
+    restriction_scatter_pipeline: wgpu::ComputePipeline,
     basis_interp_layout: wgpu::BindGroupLayout,
     basis_interp_pipeline: wgpu::ComputePipeline,
     basis_interp_transpose_pipeline: wgpu::ComputePipeline,
+    basis_grad_pipeline: wgpu::ComputePipeline,
+    basis_grad_transpose_pipeline: wgpu::ComputePipeline,
+    basis_post_layout: wgpu::BindGroupLayout,
+    basis_post_pipeline: wgpu::ComputePipeline,
 }
 
 impl GpuRuntime {
@@ -246,15 +251,100 @@ impl GpuRuntime {
                 ],
             });
 
-        let set_pipeline = create_pipeline(&device, &set_layout, "set_main");
-        let scale_pipeline = create_pipeline(&device, &scale_layout, "scale_main");
-        let axpy_pipeline = create_pipeline(&device, &axpy_layout, "axpy_main");
-        let restriction_pipeline =
-            create_pipeline(&device, &restriction_layout, "restriction_gather_main");
-        let basis_interp_pipeline =
-            create_pipeline(&device, &basis_interp_layout, "basis_interp_main");
-        let basis_interp_transpose_pipeline =
-            create_pipeline(&device, &basis_interp_layout, "basis_interp_transpose_main");
+        let shader_main = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("reed-kernels-main"),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(KERNELS_WGSL)),
+        });
+        let shader_scatter = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("reed-restriction-scatter"),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(
+                RESTRICTION_SCATTER_WGSL,
+            )),
+        });
+        let set_pipeline = create_pipeline_with_module(&device, &set_layout, &shader_main, "set_main");
+        let scale_pipeline =
+            create_pipeline_with_module(&device, &scale_layout, &shader_main, "scale_main");
+        let axpy_pipeline =
+            create_pipeline_with_module(&device, &axpy_layout, &shader_main, "axpy_main");
+        let restriction_pipeline = create_pipeline_with_module(
+            &device,
+            &restriction_layout,
+            &shader_main,
+            "restriction_gather_main",
+        );
+        let restriction_scatter_pipeline = create_pipeline_with_module(
+            &device,
+            &restriction_layout,
+            &shader_scatter,
+            "restriction_scatter_main",
+        );
+        let basis_interp_pipeline = create_pipeline_with_module(
+            &device,
+            &basis_interp_layout,
+            &shader_main,
+            "basis_interp_main",
+        );
+        let basis_interp_transpose_pipeline = create_pipeline_with_module(
+            &device,
+            &basis_interp_layout,
+            &shader_main,
+            "basis_interp_transpose_main",
+        );
+        let basis_grad_pipeline = create_pipeline_with_module(
+            &device,
+            &basis_interp_layout,
+            &shader_main,
+            "basis_grad_main",
+        );
+        let basis_grad_transpose_pipeline = create_pipeline_with_module(
+            &device,
+            &basis_interp_layout,
+            &shader_main,
+            "basis_grad_transpose_main",
+        );
+
+        let basis_post_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("reed-basis-post-layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+        let basis_post_pipeline = create_pipeline_with_module(
+            &device,
+            &basis_post_layout,
+            &shader_main,
+            "basis_post_main",
+        );
 
         Self {
             device,
@@ -267,9 +357,14 @@ impl GpuRuntime {
             axpy_pipeline,
             restriction_layout,
             restriction_pipeline,
+            restriction_scatter_pipeline,
             basis_interp_layout,
             basis_interp_pipeline,
             basis_interp_transpose_pipeline,
+            basis_grad_pipeline,
+            basis_grad_transpose_pipeline,
+            basis_post_layout,
+            basis_post_pipeline,
         }
     }
 
@@ -309,6 +404,10 @@ impl GpuRuntime {
         &self.restriction_pipeline
     }
 
+    pub fn restriction_scatter_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.restriction_scatter_pipeline
+    }
+
     pub fn basis_interp_layout(&self) -> &wgpu::BindGroupLayout {
         &self.basis_interp_layout
     }
@@ -320,18 +419,30 @@ impl GpuRuntime {
     pub fn basis_interp_transpose_pipeline(&self) -> &wgpu::ComputePipeline {
         &self.basis_interp_transpose_pipeline
     }
+
+    pub fn basis_grad_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.basis_grad_pipeline
+    }
+
+    pub fn basis_grad_transpose_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.basis_grad_transpose_pipeline
+    }
+
+    pub fn basis_post_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.basis_post_layout
+    }
+
+    pub fn basis_post_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.basis_post_pipeline
+    }
 }
 
-fn create_pipeline(
+fn create_pipeline_with_module(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
+    module: &wgpu::ShaderModule,
     entry_point: &str,
 ) -> wgpu::ComputePipeline {
-    let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("reed-vector-kernels"),
-        source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(KERNELS_WGSL)),
-    });
-
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("reed-vector-pipeline-layout"),
         bind_group_layouts: &[layout],
@@ -341,7 +452,7 @@ fn create_pipeline(
     device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
         label: Some("reed-vector-pipeline"),
         layout: Some(&pipeline_layout),
-        module: &module,
+        module,
         entry_point,
         compilation_options: wgpu::PipelineCompilationOptions::default(),
     })
@@ -361,7 +472,7 @@ struct RestrictionParams {
     ncomp: u32,
     compstride: u32,
     local_size: u32,
-    _pad0: u32,
+    global_size: u32,
     _pad1: u32,
     _pad2: u32,
 };
@@ -372,7 +483,7 @@ struct BasisInterpParams {
     num_qpoints: u32,
     ncomp: u32,
     output_size: u32,
-    _pad0: u32,
+    dim: u32,
     _pad1: u32,
     _pad2: u32,
 };
@@ -481,5 +592,217 @@ fn basis_interp_transpose_main(@builtin(global_invocation_id) gid: vec3<u32>) {
         sum = sum + bi_mat[qpt * bi_p.num_dof + dof] * bi_u[u_elem_base + qpt];
     }
     bi_v[idx] = sum;
+}
+
+@compute @workgroup_size(64)
+fn basis_grad_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let idx = gid.x;
+    if (idx >= bi_p.output_size) {
+        return;
+    }
+
+    let dim = bi_p.dim;
+    let nq = bi_p.num_qpoints;
+    let per_elem_out = bi_p.ncomp * nq * dim;
+    let elem = idx / per_elem_out;
+    let rem = idx % per_elem_out;
+    let comp = rem / (nq * dim);
+    let rem2 = rem % (nq * dim);
+    let qpt = rem2 / dim;
+    let d_dir = rem2 % dim;
+
+    var sum = 0.0;
+    let u_elem_base = (elem * bi_p.ncomp + comp) * bi_p.num_dof;
+    let mat_row = (qpt * dim + d_dir) * bi_p.num_dof;
+    for (var dof = 0u; dof < bi_p.num_dof; dof = dof + 1u) {
+        sum = sum + bi_mat[mat_row + dof] * bi_u[u_elem_base + dof];
+    }
+    // Interleaved quadrature layout per element: `iq * qcomp + comp * dim + dir` (matches CPU `LagrangeBasis`).
+    let qcomp = bi_p.ncomp * dim;
+    let out_pos = elem * (nq * qcomp) + qpt * qcomp + comp * dim + d_dir;
+    bi_v[out_pos] = sum;
+}
+
+@compute @workgroup_size(64)
+fn basis_grad_transpose_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let idx = gid.x;
+    if (idx >= bi_p.output_size) {
+        return;
+    }
+
+    let dim = bi_p.dim;
+    let nq = bi_p.num_qpoints;
+    let per_elem_out = bi_p.ncomp * bi_p.num_dof;
+    let elem = idx / per_elem_out;
+    let rem = idx % per_elem_out;
+    let comp = rem / bi_p.num_dof;
+    let dof = rem % bi_p.num_dof;
+
+    var sum = 0.0;
+    let qcomp = bi_p.ncomp * dim;
+    for (var iq = 0u; iq < nq; iq = iq + 1u) {
+        for (var dd = 0u; dd < dim; dd = dd + 1u) {
+            let row = iq * dim + dd;
+            let u_idx = elem * (nq * qcomp) + iq * qcomp + comp * dim + dd;
+            sum = sum + bi_mat[row * bi_p.num_dof + dof] * bi_u[u_idx];
+        }
+    }
+    bi_v[idx] = sum;
+}
+
+struct BasisPostParams {
+    mode: u32,
+    num_elem: u32,
+    num_qpoints: u32,
+    dim: u32,
+    ncomp: u32,
+    qcomp: u32,
+    out_size: u32,
+    _pad: u32,
+}
+
+@group(0) @binding(0) var<storage, read> bp_in: array<f32>;
+@group(0) @binding(1) var<storage, read_write> bp_out: array<f32>;
+@group(0) @binding(2) var<uniform> bp_p: BasisPostParams;
+
+@compute @workgroup_size(64)
+fn basis_post_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let idx = gid.x;
+    if (idx >= bp_p.out_size) {
+        return;
+    }
+    let nq = bp_p.num_qpoints;
+    let dim = bp_p.dim;
+    let qcomp = bp_p.qcomp;
+
+    if (bp_p.mode == 0u) {
+        let e = idx / nq;
+        let iq = idx % nq;
+        let g_base = (e * nq + iq) * qcomp;
+        var s = 0.0;
+        for (var d = 0u; d < dim; d = d + 1u) {
+            s = s + bp_in[g_base + d * dim + d];
+        }
+        bp_out[idx] = s;
+        return;
+    }
+
+    if (bp_p.mode == 1u) {
+        let w = bp_in[idx];
+        let e = idx / nq;
+        let iq = idx % nq;
+        let g_base = (e * nq + iq) * qcomp;
+        for (var j = 0u; j < qcomp; j = j + 1u) {
+            bp_out[g_base + j] = 0.0;
+        }
+        for (var d = 0u; d < dim; d = d + 1u) {
+            bp_out[g_base + d * dim + d] = w;
+        }
+        return;
+    }
+
+    if (bp_p.mode == 2u) {
+        let e = idx / nq;
+        let iq = idx % nq;
+        let g_base = (e * nq + iq) * qcomp;
+        bp_out[idx] = bp_in[g_base + 2u] - bp_in[g_base + 1u];
+        return;
+    }
+
+    if (bp_p.mode == 3u) {
+        let w = bp_in[idx];
+        let e = idx / nq;
+        let iq = idx % nq;
+        let g_base = (e * nq + iq) * qcomp;
+        for (var j = 0u; j < qcomp; j = j + 1u) {
+            bp_out[g_base + j] = 0.0;
+        }
+        bp_out[g_base + 1u] = -w;
+        bp_out[g_base + 2u] = w;
+        return;
+    }
+
+    if (bp_p.mode == 4u) {
+        let nqpt = bp_p.num_qpoints;
+        let per = idx / 3u;
+        let comp = idx % 3u;
+        let e = per / nqpt;
+        let iq = per % nqpt;
+        let g_base = (e * nqpt + iq) * qcomp;
+        if (comp == 0u) {
+            bp_out[idx] = bp_in[g_base + 7u] - bp_in[g_base + 5u];
+        } else if (comp == 1u) {
+            bp_out[idx] = bp_in[g_base + 2u] - bp_in[g_base + 6u];
+        } else {
+            bp_out[idx] = bp_in[g_base + 3u] - bp_in[g_base + 1u];
+        }
+        return;
+    }
+
+    if (bp_p.mode == 5u) {
+        let w0 = bp_in[idx * 3u];
+        let w1 = bp_in[idx * 3u + 1u];
+        let w2 = bp_in[idx * 3u + 2u];
+        let e = idx / nq;
+        let iq = idx % nq;
+        let g_base = (e * nq + iq) * qcomp;
+        for (var j = 0u; j < qcomp; j = j + 1u) {
+            bp_out[g_base + j] = 0.0;
+        }
+        bp_out[g_base + 7u] = w0;
+        bp_out[g_base + 5u] = -w0;
+        bp_out[g_base + 2u] = w1;
+        bp_out[g_base + 6u] = -w1;
+        bp_out[g_base + 3u] = w2;
+        bp_out[g_base + 1u] = -w2;
+        return;
+    }
+}
+"#;
+
+/// Transpose (scatter): `v[g] += u[l]` for offset layout. Single-thread loop (workgroup size 1) so
+/// we avoid `atomicCompareExchange` (not available on all Metal targets) while matching CPU `+=`.
+const RESTRICTION_SCATTER_WGSL: &str = r#"
+struct RestrictionParams {
+    nelem: u32,
+    elemsize: u32,
+    ncomp: u32,
+    compstride: u32,
+    local_size: u32,
+    global_size: u32,
+    _pad1: u32,
+    _pad2: u32,
+};
+
+@group(0) @binding(0) var<storage, read> rs_u: array<f32>;
+@group(0) @binding(1) var<storage, read> rs_offsets: array<i32>;
+@group(0) @binding(2) var<storage, read_write> rs_v: array<f32>;
+@group(0) @binding(3) var<uniform> rs_p: RestrictionParams;
+
+@compute @workgroup_size(1)
+fn restriction_scatter_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    if (gid.x != 0u) {
+        return;
+    }
+    for (var idx = 0u; idx < rs_p.local_size; idx = idx + 1u) {
+        let per_elem = rs_p.ncomp * rs_p.elemsize;
+        let elem = idx / per_elem;
+        let rem = idx % per_elem;
+        let comp = rem / rs_p.elemsize;
+        let local = rem % rs_p.elemsize;
+
+        let offset_idx = elem * rs_p.elemsize + local;
+        let base = rs_offsets[offset_idx];
+        if (base < 0) {
+            continue;
+        }
+        let g = u32(base) + comp * rs_p.compstride;
+        if (g >= rs_p.global_size) {
+            continue;
+        }
+
+        let val = rs_u[idx];
+        rs_v[g] = rs_v[g] + val;
+    }
 }
 "#;

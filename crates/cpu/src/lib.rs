@@ -1,5 +1,6 @@
 pub mod basis_lagrange;
 pub mod basis_simplex;
+pub mod composite_operator;
 pub mod elem_restriction;
 pub mod gallery;
 pub mod operator;
@@ -21,9 +22,12 @@ use reed_core::{
 };
 use vector::CpuVector;
 
+pub use composite_operator::CompositeOperator;
 pub use gallery::{
-    Mass1DBuild, Mass2DBuild, Mass3DBuild, MassApply, Poisson1DApply, Poisson2DApply,
-    Poisson2DBuild, Poisson3DApply, Poisson3DBuild,
+    Identity, IdentityScalar, Mass1DBuild, Mass2DBuild, Mass3DBuild, MassApply, Poisson1DApply,
+    Poisson2DApply, Poisson2DBuild, Poisson3DApply, Poisson3DBuild, Scale, ScaleScalar, Vec2Dot,
+    Vec3Dot, Vector3MassApply, Vector3Poisson1DApply, Vector3Poisson2DApply,
+    Vector3Poisson3DApply,
 };
 pub use operator::{CpuOperator, FieldVector, OperatorBuilder};
 
@@ -114,6 +118,16 @@ pub fn q_function_by_name(name: &str) -> ReedResult<Box<dyn QFunctionTrait<f64>>
         "Poisson2DApply" => Ok(Box::new(Poisson2DApply::default())),
         "Poisson3DBuild" => Ok(Box::new(Poisson3DBuild::default())),
         "Poisson3DApply" => Ok(Box::new(Poisson3DApply::default())),
+        "Vec2Dot" => Ok(Box::new(Vec2Dot::new())),
+        "Vec3Dot" => Ok(Box::new(Vec3Dot::new())),
+        "Identity" => Ok(Box::new(Identity::default())),
+        "Identity to scalar" => Ok(Box::new(IdentityScalar::default())),
+        "Scale" => Ok(Box::new(Scale::default())),
+        "Scale (scalar)" => Ok(Box::new(ScaleScalar::default())),
+        "Vector3MassApply" => Ok(Box::new(Vector3MassApply::new())),
+        "Vector3Poisson1DApply" => Ok(Box::new(Vector3Poisson1DApply::new())),
+        "Vector3Poisson2DApply" => Ok(Box::new(Vector3Poisson2DApply::new())),
+        "Vector3Poisson3DApply" => Ok(Box::new(Vector3Poisson3DApply::new())),
         other => Err(ReedError::QFunction(format!(
             "unknown CPU gallery qfunction '{}'",
             other

@@ -1,6 +1,6 @@
 ## How to run examples
 
-Current status: ex1/ex2/ex3 examples support 1D, 2D, and 3D with current Reed gallery QFunctions.
+Current status: ex1/ex2/ex3 examples support 1D, 2D, and 3D with Reed gallery QFunctions. Named entries under `Reed::q_function_by_name` match libCEED’s `ceed-gallery-list.h` where implemented (see `design_mapping.md`, section 5).
 
 ```bash
 cargo run --example ex1_volume
@@ -63,6 +63,8 @@ Current benchmark groups:
 
 - `cpu_poisson_apply`
 - `cpu_combined_apply`
+- `cpu_basis_apply` (includes `Interp` / `Grad` / **`Div`** / **`Curl`** on tensor H1 Lagrange, vector fields `ncomp = dim` for differential modes)
+- `cpu_simplex_basis_apply` (`Interp` / `Grad` on triangle / tet `basis_h1_simplex`, scalar `ncomp = 1`)
 
 ## Native WGPU microbenchmarks
 
@@ -77,6 +79,8 @@ Current WGPU benchmark groups:
 - `wgpu_vector_ops`
 - `wgpu_elem_restriction`
 - `wgpu_basis_interp`
+- `wgpu_basis_grad`
+- `wgpu_basis_div_curl` (tensor H1 Lagrange, `ncomp = dim`, forward `Div` / `Curl` on `f32`)
 
 Direct CPU/WGPU comparison benchmark:
 
@@ -88,11 +92,15 @@ Current comparison groups:
 
 - `compare_vector_axpy`
 - `compare_restriction_gather`
+- `compare_restriction_transpose`
 - `compare_basis_interp`
+- `compare_basis_grad`
+- `compare_basis_grad_2d` (tensor H1 Lagrange, `dim = 2`, `ncomp = 1`)
+- `compare_basis_div_2d` (`ncomp = dim = 2`, forward `Div` only)
 
 These are microbenchmarks for the portions that currently execute real WGPU compute kernels on native `f32` data. They are not end-to-end operator benchmarks yet, because operator assembly/QFunction execution still routes through CPU code paths.
 
-GPU coverage now also includes `Basis::apply(..., transpose = true, EvalMode::Interp)` for native `f32`, which removes one more CPU fallback from the operator output path.
+GPU coverage for tensor H1 Lagrange on native **`f32`** includes **`EvalMode::Interp`**, **`Grad`**, **`Div`**, and **`Curl`** (forward and transpose where implemented), with quadrature-side vector layout aligned to CPU `LagrangeBasis` (`iq · (ncomp·dim) + comp·dim + dir`). That path reduces CPU fallback for those basis evaluations; full operators still use the CPU gallery/QFunction path unless otherwise noted.
 
 ## WASM compile
 
@@ -123,10 +131,10 @@ Current implementation stage: backend initialization and object factory wiring a
 
 Progress update:
 
-- `WgpuVector` now includes real compute-shader execution for `set_value`, `scale`, and `axpy` on `f32` vectors.
-- `WgpuElemRestriction` now includes a real compute-shader path for `NoTranspose` with offset restrictions on `f32` data.
-- `WgpuBasis` now includes a real compute-shader path for `EvalMode::Interp` with `transpose = false` on `f32` data.
-- Other numeric types and unimplemented objects still use fallback paths, preserving compatibility while GPU coverage expands incrementally.
+- `WgpuVector` includes compute-shader execution for `set_value`, `scale`, and `axpy` on `f32` vectors.
+- `WgpuElemRestriction` includes compute-shader paths for offset-based restrictions on `f32`: gather (`NoTranspose`) and transpose scatter (`Transpose`; serial single-thread kernel for portability on Metal).
+- `WgpuBasis` runs `Interp`, `Grad`, `Div`, and `Curl` on `f32` for tensor H1 Lagrange when `ncomp` matches the differential mode (including transpose for these modes), matching CPU `LagrangeBasis` in integration tests.
+- Non-`f32` types and other objects still use CPU fallbacks where GPU paths are not implemented.
 
 ## Web benchmark UI
 

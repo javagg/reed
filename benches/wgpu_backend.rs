@@ -188,11 +188,202 @@ fn bench_wgpu_basis_interp(c: &mut Criterion) {
 }
 
 #[cfg(feature = "wgpu-backend")]
+fn bench_wgpu_basis_grad(c: &mut Criterion) {
+    let reed = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let mut group = c.benchmark_group("wgpu_basis_grad");
+
+    for &(p, q, num_elem) in &[(4usize, 6usize, 8_192usize), (8, 10, 4_096)] {
+        let basis = reed
+            .basis_tensor_h1_lagrange(1, 1, p, q, QuadMode::Gauss)
+            .unwrap();
+        let dim = basis.dim();
+        let input_len = num_elem * basis.num_dof();
+        let output_len = num_elem * basis.num_qpoints() * dim;
+        let input = (0..input_len)
+            .map(|index| ((index % 31) as f32 - 15.0) * 0.0625)
+            .collect::<Vec<_>>();
+        let mut output = vec![0.0_f32; output_len];
+
+        group.bench_with_input(
+            BenchmarkId::new("grad", format!("dim1_p{p}_q{q}_e{num_elem}")),
+            &(p, q, num_elem),
+            |b, _| {
+                b.iter(|| {
+                    basis
+                        .apply(
+                            num_elem,
+                            false,
+                            EvalMode::Grad,
+                            black_box(&input),
+                            black_box(&mut output),
+                        )
+                        .unwrap();
+                });
+            },
+        );
+    }
+
+    for &(p, q, num_elem) in &[(4usize, 6usize, 1_024usize), (6, 8, 256)] {
+        let basis = reed
+            .basis_tensor_h1_lagrange(2, 1, p, q, QuadMode::Gauss)
+            .unwrap();
+        let dim = basis.dim();
+        let input_len = num_elem * basis.num_dof();
+        let output_len = num_elem * basis.num_qpoints() * dim;
+        let input = (0..input_len)
+            .map(|index| ((index % 31) as f32 - 15.0) * 0.0625)
+            .collect::<Vec<_>>();
+        let mut output = vec![0.0_f32; output_len];
+
+        group.bench_with_input(
+            BenchmarkId::new("grad", format!("dim2_p{p}_q{q}_e{num_elem}")),
+            &(p, q, num_elem),
+            |b, _| {
+                b.iter(|| {
+                    basis
+                        .apply(
+                            num_elem,
+                            false,
+                            EvalMode::Grad,
+                            black_box(&input),
+                            black_box(&mut output),
+                        )
+                        .unwrap();
+                });
+            },
+        );
+    }
+
+    for &(p, q, num_elem) in &[(4usize, 6usize, 128usize), (6, 8, 64)] {
+        let basis = reed
+            .basis_tensor_h1_lagrange(3, 1, p, q, QuadMode::Gauss)
+            .unwrap();
+        let dim = basis.dim();
+        let input_len = num_elem * basis.num_dof();
+        let output_len = num_elem * basis.num_qpoints() * dim;
+        let input = (0..input_len)
+            .map(|index| ((index % 31) as f32 - 15.0) * 0.0625)
+            .collect::<Vec<_>>();
+        let mut output = vec![0.0_f32; output_len];
+
+        group.bench_with_input(
+            BenchmarkId::new("grad", format!("dim3_p{p}_q{q}_e{num_elem}")),
+            &(p, q, num_elem),
+            |b, _| {
+                b.iter(|| {
+                    basis
+                        .apply(
+                            num_elem,
+                            false,
+                            EvalMode::Grad,
+                            black_box(&input),
+                            black_box(&mut output),
+                        )
+                        .unwrap();
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+#[cfg(feature = "wgpu-backend")]
+fn bench_wgpu_basis_div_curl(c: &mut Criterion) {
+    let reed = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let mut group = c.benchmark_group("wgpu_basis_div_curl");
+
+    // 2D: Div and Curl (scalar curl output per q-point)
+    for &(p, q, num_elem) in &[(3usize, 4usize, 512usize), (4usize, 6usize, 256usize)] {
+        let basis = reed
+            .basis_tensor_h1_lagrange(2, 2, p, q, QuadMode::Gauss)
+            .unwrap();
+        let input_len = num_elem * basis.num_dof() * 2;
+        let output_len = num_elem * basis.num_qpoints();
+        let input = (0..input_len)
+            .map(|index| ((index % 31) as f32 - 15.0) * 0.0625)
+            .collect::<Vec<_>>();
+        let mut output = vec![0.0_f32; output_len];
+
+        group.bench_with_input(
+            BenchmarkId::new("div", format!("dim2_p{p}_q{q}_e{num_elem}")),
+            &(p, q, num_elem),
+            |b, _| {
+                b.iter(|| {
+                    basis
+                        .apply(
+                            num_elem,
+                            false,
+                            EvalMode::Div,
+                            black_box(&input),
+                            black_box(&mut output),
+                        )
+                        .unwrap();
+                });
+            },
+        );
+
+        group.bench_with_input(
+            BenchmarkId::new("curl2d", format!("dim2_p{p}_q{q}_e{num_elem}")),
+            &(p, q, num_elem),
+            |b, _| {
+                b.iter(|| {
+                    basis
+                        .apply(
+                            num_elem,
+                            false,
+                            EvalMode::Curl,
+                            black_box(&input),
+                            black_box(&mut output),
+                        )
+                        .unwrap();
+                });
+            },
+        );
+    }
+
+    // 3D: vector Curl (3 components per q-point)
+    for &(p, q, num_elem) in &[(3usize, 4usize, 64usize), (4usize, 6usize, 32usize)] {
+        let basis = reed
+            .basis_tensor_h1_lagrange(3, 3, p, q, QuadMode::Gauss)
+            .unwrap();
+        let input_len = num_elem * basis.num_dof() * 3;
+        let output_len = num_elem * basis.num_qpoints() * 3;
+        let input = (0..input_len)
+            .map(|index| ((index % 31) as f32 - 15.0) * 0.0625)
+            .collect::<Vec<_>>();
+        let mut output = vec![0.0_f32; output_len];
+
+        group.bench_with_input(
+            BenchmarkId::new("curl3d", format!("dim3_p{p}_q{q}_e{num_elem}")),
+            &(p, q, num_elem),
+            |b, _| {
+                b.iter(|| {
+                    basis
+                        .apply(
+                            num_elem,
+                            false,
+                            EvalMode::Curl,
+                            black_box(&input),
+                            black_box(&mut output),
+                        )
+                        .unwrap();
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+#[cfg(feature = "wgpu-backend")]
 criterion_group!(
     benches,
     bench_wgpu_vector_ops,
     bench_wgpu_elem_restriction,
-    bench_wgpu_basis_interp
+    bench_wgpu_basis_interp,
+    bench_wgpu_basis_grad,
+    bench_wgpu_basis_div_curl
 );
 #[cfg(feature = "wgpu-backend")]
 criterion_main!(benches);

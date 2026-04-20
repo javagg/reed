@@ -339,6 +339,128 @@ impl<T: Scalar> BasisTrait<T> for SimplexBasis<T> {
                     }
                 }
             }
+            EvalMode::Div => {
+                if self.ncomp != self.dim {
+                    return Err(ReedError::Basis(
+                        "EvalMode::Div requires ncomp == dim for SimplexBasis".into(),
+                    ));
+                }
+                let qcomp = self.ncomp * self.dim;
+                if transpose {
+                    let in_size = num_elem * self.num_qpoints;
+                    let out_size = num_elem * self.num_dof * self.ncomp;
+                    check_sizes(u, in_size, v, out_size, "div transpose")?;
+                    let mut grad_buf = vec![T::ZERO; num_elem * self.num_qpoints * qcomp];
+                    for e in 0..num_elem {
+                        for iq in 0..self.num_qpoints {
+                            let w = u[e * self.num_qpoints + iq];
+                            let base = (e * self.num_qpoints + iq) * qcomp;
+                            for d in 0..self.dim {
+                                grad_buf[base + d * self.dim + d] = w;
+                            }
+                        }
+                    }
+                    self.apply(num_elem, true, EvalMode::Grad, &grad_buf, v)?;
+                } else {
+                    let in_size = num_elem * self.num_dof * self.ncomp;
+                    let out_size = num_elem * self.num_qpoints;
+                    check_sizes(u, in_size, v, out_size, "div")?;
+                    let mut grad_buf = vec![T::ZERO; num_elem * self.num_qpoints * qcomp];
+                    self.apply(num_elem, false, EvalMode::Grad, u, &mut grad_buf)?;
+                    for e in 0..num_elem {
+                        for iq in 0..self.num_qpoints {
+                            let idx = e * self.num_qpoints + iq;
+                            let g_base = idx * qcomp;
+                            let mut s = T::ZERO;
+                            for d in 0..self.dim {
+                                s += grad_buf[g_base + d * self.dim + d];
+                            }
+                            v[idx] = s;
+                        }
+                    }
+                }
+            }
+            EvalMode::Curl => {
+                let qcomp = self.ncomp * self.dim;
+                match (self.dim, self.ncomp) {
+                    (2, 2) => {
+                        if transpose {
+                            let in_size = num_elem * self.num_qpoints;
+                            let out_size = num_elem * self.num_dof * self.ncomp;
+                            check_sizes(u, in_size, v, out_size, "curl transpose")?;
+                            let mut grad_buf = vec![T::ZERO; num_elem * self.num_qpoints * qcomp];
+                            for e in 0..num_elem {
+                                for iq in 0..self.num_qpoints {
+                                    let w = u[e * self.num_qpoints + iq];
+                                    let base = (e * self.num_qpoints + iq) * qcomp;
+                                    grad_buf[base + 1] -= w;
+                                    grad_buf[base + 2] += w;
+                                }
+                            }
+                            self.apply(num_elem, true, EvalMode::Grad, &grad_buf, v)?;
+                        } else {
+                            let in_size = num_elem * self.num_dof * self.ncomp;
+                            let out_size = num_elem * self.num_qpoints;
+                            check_sizes(u, in_size, v, out_size, "curl")?;
+                            let mut grad_buf = vec![T::ZERO; num_elem * self.num_qpoints * qcomp];
+                            self.apply(num_elem, false, EvalMode::Grad, u, &mut grad_buf)?;
+                            for e in 0..num_elem {
+                                for iq in 0..self.num_qpoints {
+                                    let idx = e * self.num_qpoints + iq;
+                                    let g_base = idx * qcomp;
+                                    v[idx] = grad_buf[g_base + 2] - grad_buf[g_base + 1];
+                                }
+                            }
+                        }
+                    }
+                    (3, 3) => {
+                        if transpose {
+                            let in_size = num_elem * self.num_qpoints * 3;
+                            let out_size = num_elem * self.num_dof * self.ncomp;
+                            check_sizes(u, in_size, v, out_size, "curl transpose")?;
+                            let mut grad_buf = vec![T::ZERO; num_elem * self.num_qpoints * qcomp];
+                            for e in 0..num_elem {
+                                for iq in 0..self.num_qpoints {
+                                    let qidx = e * self.num_qpoints + iq;
+                                    let w0 = u[qidx * 3];
+                                    let w1 = u[qidx * 3 + 1];
+                                    let w2 = u[qidx * 3 + 2];
+                                    let base = qidx * qcomp;
+                                    grad_buf[base + 7] += w0;
+                                    grad_buf[base + 5] -= w0;
+                                    grad_buf[base + 2] += w1;
+                                    grad_buf[base + 6] -= w1;
+                                    grad_buf[base + 3] += w2;
+                                    grad_buf[base + 1] -= w2;
+                                }
+                            }
+                            self.apply(num_elem, true, EvalMode::Grad, &grad_buf, v)?;
+                        } else {
+                            let in_size = num_elem * self.num_dof * self.ncomp;
+                            let out_size = num_elem * self.num_qpoints * 3;
+                            check_sizes(u, in_size, v, out_size, "curl")?;
+                            let mut grad_buf = vec![T::ZERO; num_elem * self.num_qpoints * qcomp];
+                            self.apply(num_elem, false, EvalMode::Grad, u, &mut grad_buf)?;
+                            for e in 0..num_elem {
+                                for iq in 0..self.num_qpoints {
+                                    let qidx = e * self.num_qpoints + iq;
+                                    let g_base = qidx * qcomp;
+                                    let g = &grad_buf[g_base..g_base + qcomp];
+                                    v[qidx * 3] = g[7] - g[5];
+                                    v[qidx * 3 + 1] = g[2] - g[6];
+                                    v[qidx * 3 + 2] = g[3] - g[1];
+                                }
+                            }
+                        }
+                    }
+                    _ => {
+                        return Err(ReedError::Basis(
+                            "EvalMode::Curl requires (dim, ncomp) = (2, 2) or (3, 3) for SimplexBasis"
+                                .into(),
+                        ));
+                    }
+                }
+            }
             other => {
                 return Err(ReedError::Basis(format!(
                     "SimplexBasis: eval mode {:?} not implemented",
@@ -828,5 +950,76 @@ mod tests {
         basis.apply(1, false, EvalMode::Weight, &[], &mut v).unwrap();
         let sum: f64 = v.iter().sum();
         assert!((sum - 1.0/6.0).abs() < TOL, "weight sum={sum}, expected 1/6 (tet volume)");
+    }
+
+    #[test]
+    fn tri_p1_div_curl_adjoint_identities() {
+        let basis = SimplexBasis::<f64>::new(ElemTopology::Triangle, 1, 2, 3).unwrap();
+        assert_eq!(basis.dim(), 2);
+        assert_eq!(basis.num_comp(), 2);
+        let nd = basis.num_dof() * basis.num_comp();
+        let nq = basis.num_qpoints();
+        let u: Vec<f64> = (0..nd).map(|i| 0.13 * i as f64 - 0.2).collect();
+        let w_div: Vec<f64> = (0..nq).map(|i| 0.05 * i as f64 + 0.4).collect();
+        let w_curl: Vec<f64> = (0..nq).map(|i| 0.11 * i as f64 - 0.1).collect();
+
+        let mut div_u = vec![0.0_f64; nq];
+        basis
+            .apply(1, false, EvalMode::Div, &u, &mut div_u)
+            .unwrap();
+        let mut dt_w = vec![0.0_f64; nd];
+        basis
+            .apply(1, true, EvalMode::Div, &w_div, &mut dt_w)
+            .unwrap();
+        let lhs: f64 = u.iter().zip(dt_w.iter()).map(|(a, b)| a * b).sum();
+        let rhs: f64 = div_u.iter().zip(w_div.iter()).map(|(a, b)| a * b).sum();
+        assert!((lhs - rhs).abs() < 1e-10 * (1.0 + lhs.abs()));
+
+        let mut curl_u = vec![0.0_f64; nq];
+        basis
+            .apply(1, false, EvalMode::Curl, &u, &mut curl_u)
+            .unwrap();
+        dt_w.fill(0.0);
+        basis
+            .apply(1, true, EvalMode::Curl, &w_curl, &mut dt_w)
+            .unwrap();
+        let lhs2: f64 = u.iter().zip(dt_w.iter()).map(|(a, b)| a * b).sum();
+        let rhs2: f64 = curl_u.iter().zip(w_curl.iter()).map(|(a, b)| a * b).sum();
+        assert!((lhs2 - rhs2).abs() < 1e-10 * (1.0 + lhs2.abs()));
+    }
+
+    #[test]
+    fn tet_p1_div_curl_adjoint_identities() {
+        let basis = SimplexBasis::<f64>::new(ElemTopology::Tet, 1, 3, 4).unwrap();
+        assert_eq!(basis.dim(), 3);
+        let nd = basis.num_dof() * basis.num_comp();
+        let nq = basis.num_qpoints();
+        let u: Vec<f64> = (0..nd).map(|i| 0.07 * i as f64 - 0.15).collect();
+        let w_div: Vec<f64> = (0..nq).map(|i| 0.03 * i as f64 + 0.5).collect();
+        let w_curl: Vec<f64> = (0..nq * 3).map(|i| 0.02 * i as f64 + 0.12).collect();
+
+        let mut div_u = vec![0.0_f64; nq];
+        basis
+            .apply(1, false, EvalMode::Div, &u, &mut div_u)
+            .unwrap();
+        let mut dt_w = vec![0.0_f64; nd];
+        basis
+            .apply(1, true, EvalMode::Div, &w_div, &mut dt_w)
+            .unwrap();
+        let lhs: f64 = u.iter().zip(dt_w.iter()).map(|(a, b)| a * b).sum();
+        let rhs: f64 = div_u.iter().zip(w_div.iter()).map(|(a, b)| a * b).sum();
+        assert!((lhs - rhs).abs() < 1e-10 * (1.0 + lhs.abs()));
+
+        let mut curl_u = vec![0.0_f64; nq * 3];
+        basis
+            .apply(1, false, EvalMode::Curl, &u, &mut curl_u)
+            .unwrap();
+        dt_w.fill(0.0);
+        basis
+            .apply(1, true, EvalMode::Curl, &w_curl, &mut dt_w)
+            .unwrap();
+        let lhs2: f64 = u.iter().zip(dt_w.iter()).map(|(a, b)| a * b).sum();
+        let rhs2: f64 = curl_u.iter().zip(w_curl.iter()).map(|(a, b)| a * b).sum();
+        assert!((lhs2 - rhs2).abs() < 1e-9 * (1.0 + lhs2.abs()));
     }
 }

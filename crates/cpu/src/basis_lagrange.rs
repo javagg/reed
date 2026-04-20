@@ -195,6 +195,181 @@ impl<T: Scalar> BasisTrait<T> for LagrangeBasis<T> {
                     }
                 }
             }
+            EvalMode::Div => {
+                if self.ncomp != self.dim {
+                    return Err(ReedError::Basis(
+                        "EvalMode::Div requires ncomp == dim (vector field with one component per spatial axis)"
+                            .into(),
+                    ));
+                }
+                let qcomp = self.ncomp * self.dim;
+                if transpose {
+                    // Adjoint of forward Div = H ∘ Grad: expand scalar w[q] onto diagonal entries of
+                    // the per-qpoint gradient stencil, then apply Grad^T (libCEED-consistent).
+                    let in_size = num_elem * self.num_qpoints;
+                    let out_size = num_elem * self.num_dof * self.ncomp;
+                    if u.len() != in_size || v.len() != out_size {
+                        return Err(ReedError::Basis(format!(
+                            "div transpose apply size mismatch: input {}, expected {}; output {}, expected {}",
+                            u.len(),
+                            in_size,
+                            v.len(),
+                            out_size
+                        )));
+                    }
+                    let mut grad_buf = vec![T::ZERO; num_elem * self.num_qpoints * qcomp];
+                    for e in 0..num_elem {
+                        for iq in 0..self.num_qpoints {
+                            let w = u[e * self.num_qpoints + iq];
+                            let base = (e * self.num_qpoints + iq) * qcomp;
+                            for d in 0..self.dim {
+                                grad_buf[base + d * self.dim + d] = w;
+                            }
+                        }
+                    }
+                    self.apply(num_elem, true, EvalMode::Grad, &grad_buf, v)?;
+                } else {
+                    let in_size = num_elem * self.num_dof * self.ncomp;
+                    let out_size = num_elem * self.num_qpoints;
+                    if u.len() != in_size || v.len() != out_size {
+                        return Err(ReedError::Basis(format!(
+                            "div apply size mismatch: input {}, expected {}; output {}, expected {}",
+                            u.len(),
+                            in_size,
+                            v.len(),
+                            out_size
+                        )));
+                    }
+                    let grad_len = num_elem * self.num_qpoints * qcomp;
+                    let mut grad_buf = vec![T::ZERO; grad_len];
+                    self.apply(num_elem, false, EvalMode::Grad, u, &mut grad_buf)?;
+                    for e in 0..num_elem {
+                        for iq in 0..self.num_qpoints {
+                            let idx = e * self.num_qpoints + iq;
+                            let g_base = idx * qcomp;
+                            let mut s = T::ZERO;
+                            for d in 0..self.dim {
+                                s += grad_buf[g_base + d * self.dim + d];
+                            }
+                            v[idx] = s;
+                        }
+                    }
+                }
+            }
+            EvalMode::Curl => {
+                // 2D: scalar curl (∂uy/∂x − ∂ux/∂y); 3D: vector curl in Cartesian coordinates.
+                // Layout matches Grad: `qcomp = ncomp * dim`, index `comp * dim + dir`.
+                let qcomp = self.ncomp * self.dim;
+                match (self.dim, self.ncomp) {
+                    (2, 2) => {
+                        if transpose {
+                            let in_size = num_elem * self.num_qpoints;
+                            let out_size = num_elem * self.num_dof * self.ncomp;
+                            if u.len() != in_size || v.len() != out_size {
+                                return Err(ReedError::Basis(format!(
+                                    "curl transpose apply size mismatch: input {}, expected {}; output {}, expected {}",
+                                    u.len(),
+                                    in_size,
+                                    v.len(),
+                                    out_size
+                                )));
+                            }
+                            let mut grad_buf = vec![T::ZERO; num_elem * self.num_qpoints * qcomp];
+                            for e in 0..num_elem {
+                                for iq in 0..self.num_qpoints {
+                                    let w = u[e * self.num_qpoints + iq];
+                                    let base = (e * self.num_qpoints + iq) * qcomp;
+                                    grad_buf[base + 1] -= w; // −∂/∂uy term
+                                    grad_buf[base + 2] += w; // +∂/∂ux term (adjoint of curl_z)
+                                }
+                            }
+                            self.apply(num_elem, true, EvalMode::Grad, &grad_buf, v)?;
+                        } else {
+                            let in_size = num_elem * self.num_dof * self.ncomp;
+                            let out_size = num_elem * self.num_qpoints;
+                            if u.len() != in_size || v.len() != out_size {
+                                return Err(ReedError::Basis(format!(
+                                    "curl apply size mismatch: input {}, expected {}; output {}, expected {}",
+                                    u.len(),
+                                    in_size,
+                                    v.len(),
+                                    out_size
+                                )));
+                            }
+                            let mut grad_buf = vec![T::ZERO; num_elem * self.num_qpoints * qcomp];
+                            self.apply(num_elem, false, EvalMode::Grad, u, &mut grad_buf)?;
+                            for e in 0..num_elem {
+                                for iq in 0..self.num_qpoints {
+                                    let idx = e * self.num_qpoints + iq;
+                                    let g_base = idx * qcomp;
+                                    v[idx] = grad_buf[g_base + 2] - grad_buf[g_base + 1];
+                                }
+                            }
+                        }
+                    }
+                    (3, 3) => {
+                        if transpose {
+                            let in_size = num_elem * self.num_qpoints * 3;
+                            let out_size = num_elem * self.num_dof * self.ncomp;
+                            if u.len() != in_size || v.len() != out_size {
+                                return Err(ReedError::Basis(format!(
+                                    "curl transpose apply size mismatch: input {}, expected {}; output {}, expected {}",
+                                    u.len(),
+                                    in_size,
+                                    v.len(),
+                                    out_size
+                                )));
+                            }
+                            let mut grad_buf = vec![T::ZERO; num_elem * self.num_qpoints * qcomp];
+                            for e in 0..num_elem {
+                                for iq in 0..self.num_qpoints {
+                                    let qidx = e * self.num_qpoints + iq;
+                                    let w0 = u[qidx * 3];
+                                    let w1 = u[qidx * 3 + 1];
+                                    let w2 = u[qidx * 3 + 2];
+                                    let base = qidx * qcomp;
+                                    grad_buf[base + 7] += w0;
+                                    grad_buf[base + 5] -= w0;
+                                    grad_buf[base + 2] += w1;
+                                    grad_buf[base + 6] -= w1;
+                                    grad_buf[base + 3] += w2;
+                                    grad_buf[base + 1] -= w2;
+                                }
+                            }
+                            self.apply(num_elem, true, EvalMode::Grad, &grad_buf, v)?;
+                        } else {
+                            let in_size = num_elem * self.num_dof * self.ncomp;
+                            let out_size = num_elem * self.num_qpoints * 3;
+                            if u.len() != in_size || v.len() != out_size {
+                                return Err(ReedError::Basis(format!(
+                                    "curl apply size mismatch: input {}, expected {}; output {}, expected {}",
+                                    u.len(),
+                                    in_size,
+                                    v.len(),
+                                    out_size
+                                )));
+                            }
+                            let mut grad_buf = vec![T::ZERO; num_elem * self.num_qpoints * qcomp];
+                            self.apply(num_elem, false, EvalMode::Grad, u, &mut grad_buf)?;
+                            for e in 0..num_elem {
+                                for iq in 0..self.num_qpoints {
+                                    let qidx = e * self.num_qpoints + iq;
+                                    let g_base = qidx * qcomp;
+                                    let g = &grad_buf[g_base..g_base + qcomp];
+                                    v[qidx * 3] = g[7] - g[5];
+                                    v[qidx * 3 + 1] = g[2] - g[6];
+                                    v[qidx * 3 + 2] = g[3] - g[1];
+                                }
+                            }
+                        }
+                    }
+                    _ => {
+                        return Err(ReedError::Basis(
+                            "EvalMode::Curl requires (dim, ncomp) = (2, 2) or (3, 3)".into(),
+                        ));
+                    }
+                }
+            }
             other => {
                 return Err(ReedError::Basis(format!(
                     "eval mode {:?} not implemented in CPU basis",
@@ -1621,6 +1796,79 @@ mod tests {
         for (got, want) in v.iter().zip(expected.iter()) {
             assert!((got - want).abs() < 1.0e-12);
         }
+    }
+
+    /// Discrete inner-product identity: ⟨D u, w⟩ = ⟨u, Dᵀ w⟩ for forward/transpose Div.
+    #[test]
+    fn test_div_forward_transpose_adjoint_identity() {
+        let basis = LagrangeBasis::<f64>::new(2, 2, 2, 2, reed_core::QuadMode::Gauss).unwrap();
+        let num_elem = 1usize;
+        let nd = num_elem * basis.num_dof() * basis.num_comp();
+        let nq = num_elem * basis.num_qpoints();
+        let u: Vec<f64> = (0..nd).map(|i| (i as f64) * 0.25 - 1.0).collect();
+        let w: Vec<f64> = (0..nq).map(|i| (i as f64) * 0.1 + 0.3).collect();
+
+        let mut div_u = vec![0.0_f64; nq];
+        basis
+            .apply(num_elem, false, EvalMode::Div, &u, &mut div_u)
+            .unwrap();
+
+        let mut dt_w = vec![0.0_f64; nd];
+        basis
+            .apply(num_elem, true, EvalMode::Div, &w, &mut dt_w)
+            .unwrap();
+
+        let lhs: f64 = u.iter().zip(dt_w.iter()).map(|(a, b)| a * b).sum();
+        let rhs: f64 = div_u.iter().zip(w.iter()).map(|(a, b)| a * b).sum();
+        assert!((lhs - rhs).abs() < 1e-9 * (1.0 + lhs.abs()));
+    }
+
+    #[test]
+    fn test_curl_2d_forward_transpose_adjoint_identity() {
+        let basis = LagrangeBasis::<f64>::new(2, 2, 2, 2, reed_core::QuadMode::Gauss).unwrap();
+        let num_elem = 1usize;
+        let nd = num_elem * basis.num_dof() * basis.num_comp();
+        let nq = num_elem * basis.num_qpoints();
+        let u: Vec<f64> = (0..nd).map(|i| (i as f64) * 0.11 - 0.4).collect();
+        let w: Vec<f64> = (0..nq).map(|i| (i as f64) * 0.07 + 0.2).collect();
+
+        let mut curl_u = vec![0.0_f64; nq];
+        basis
+            .apply(num_elem, false, EvalMode::Curl, &u, &mut curl_u)
+            .unwrap();
+
+        let mut ct_w = vec![0.0_f64; nd];
+        basis
+            .apply(num_elem, true, EvalMode::Curl, &w, &mut ct_w)
+            .unwrap();
+
+        let lhs: f64 = u.iter().zip(ct_w.iter()).map(|(a, b)| a * b).sum();
+        let rhs: f64 = curl_u.iter().zip(w.iter()).map(|(a, b)| a * b).sum();
+        assert!((lhs - rhs).abs() < 1e-9 * (1.0 + lhs.abs()));
+    }
+
+    #[test]
+    fn test_curl_3d_forward_transpose_adjoint_identity() {
+        let basis = LagrangeBasis::<f64>::new(3, 3, 2, 2, reed_core::QuadMode::Gauss).unwrap();
+        let num_elem = 1usize;
+        let nd = num_elem * basis.num_dof() * basis.num_comp();
+        let nq = num_elem * basis.num_qpoints();
+        let u: Vec<f64> = (0..nd).map(|i| (i as f64) * 0.09 - 0.5).collect();
+        let w: Vec<f64> = (0..nq * 3).map(|i| (i as f64) * 0.03 + 0.1).collect();
+
+        let mut curl_u = vec![0.0_f64; nq * 3];
+        basis
+            .apply(num_elem, false, EvalMode::Curl, &u, &mut curl_u)
+            .unwrap();
+
+        let mut ct_w = vec![0.0_f64; nd];
+        basis
+            .apply(num_elem, true, EvalMode::Curl, &w, &mut ct_w)
+            .unwrap();
+
+        let lhs: f64 = u.iter().zip(ct_w.iter()).map(|(a, b)| a * b).sum();
+        let rhs: f64 = curl_u.iter().zip(w.iter()).map(|(a, b)| a * b).sum();
+        assert!((lhs - rhs).abs() < 1e-8 * (1.0 + lhs.abs()));
     }
 
     #[test]

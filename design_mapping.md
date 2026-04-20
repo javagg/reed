@@ -99,6 +99,7 @@ Reed 对应：
 
 - `Reed::elem_restriction()`
 - `Reed::strided_elem_restriction()`
+- `Reed::elem_restriction_at_points()`（语义同 offset restriction，`elemsize = npoints_per_elem`，对齐 libCEED `CeedElemRestrictionCreateAtPoints` 命名）
 - `ElemRestrictionTrait::apply()`
 
 说明：
@@ -126,8 +127,10 @@ Reed 对应：
 
 说明：
 
-- 当前 Reed 主要实现了 tensor H1 Lagrange basis。
-- 这与 libCEED 的基础示例路径是对齐的，但还没有覆盖更广泛 basis 家族。
+- 当前 Reed 主要实现了 tensor H1 Lagrange basis（CPU），并对 `EvalMode::Div` 在 **向量场且 `ncomp == dim`** 时提供散度及其转置（与 `Grad` 组合，满足离散伴随恒等式）。
+- `EvalMode::Curl`：在 **(dim,ncomp)=(2,2)** 时为标量（平面旋度）；** (3,3)** 时为三维向量旋度；正/转置均通过 `Grad` 组合实现。
+- **WGPU**：`WgpuBasis` 对 tensor H1 Lagrange 的 **`Interp` / `Grad`**（含转置）在原生 `f32` 上走 compute；**`Div` / `Curl`** 在 `f32` 上为 **`basis_post` 准备（注入 / 旋度对偶权重）+ 稠密 `Grad` 或 `Gradᵀ`**，与 CPU `LagrangeBasis` 的积分点布局 `qcomp = ncomp·dim`、`comp·dim + dir` 一致。
+- 单纯形 `basis_h1_simplex` 上同样支持 **`Div` / `Curl`**（与 Lagrange 张量积相同的索引约定）；与 libCEED 的 H(div)/H(curl) **专用有限元基** 相比，此处仍是 **H1 向量场的微分算子**，并非 Nédélec 等空间。
 
 ### 4.4 QFunction
 
@@ -141,11 +144,13 @@ libCEED 概念：
 
 Reed 对应：
 
-- `Reed::q_function_interior()`
+- `Reed::q_function_interior()`（`context_byte_len` + 闭包接收 `ctx: &[u8]`）
 - `QFunctionField`
-- `QFunctionTrait`
+- `QFunctionTrait`（`context_byte_len()` + `apply(ctx, ...)`）
+- `QFunctionContext`（字节缓冲，`read_f64_le` / `write_f64_le` 等）
 - `ClosureQFunction`
 - `Reed::q_function_by_name()`
+- `OperatorBuilder::qfunction_context()`（长度须与 `context_byte_len()` 一致）
 
 当前对应情况：
 
@@ -154,11 +159,11 @@ Reed 对应：
 | 用户自定义 interior qfunction | 已支持 | 通过闭包构造 |
 | 命名 gallery qfunction | 已支持 | 当前仅 CPU gallery 的有限集合 |
 | QFunction field 描述 | 已支持 | `QFunctionField { name, num_comp, eval_mode }` |
-| QFunction context | 部分缺失 | 当前没有与 libCEED 等价的独立 context 对象 |
+| QFunction context | 已支持（MVP） | `QFunctionContext` + 算子执行时传入 `apply`；尚无设备侧同步 API |
 
 说明：
 
-- `QFunctionContext` 是 Reed 后续扩展的关键点，尤其在迁移 libCEED 示例时会频繁使用。
+- 与 libCEED 一样，context 为定长字节块；gallery 默认 `context_byte_len() == 0`。
 
 ### 4.5 Operator
 
@@ -174,10 +179,12 @@ Reed 对应：
 
 - `OperatorBuilder`
 - `OperatorBuilder::field()`
+- `OperatorBuilder::qfunction_context()`
 - `OperatorTrait::apply()`
 - `OperatorTrait::apply_add()`
 - `OperatorTrait::linear_assemble_diagonal()`
 - `FieldVector<'a, T>`
+- `CompositeOperator<T>`（`y = sum_i A_i x`，对应 libCEED 加法型 `CeedCompositeOperator` 的 apply 语义）
 
 `FieldVector` 与 libCEED field vector 语义映射：
 
@@ -191,20 +198,25 @@ Reed 对应：
 
 ## 5. 当前 Reed gallery QFunction 与 libCEED 示例对照
 
-| Reed gallery 名称 | 对应 libCEED 概念 | 当前状态 |
+libCEED 内置 gallery 名称见上游 `gallery/ceed-gallery-list.h`（`CeedQFunctionRegister_*`）。Reed 通过 `Reed::q_function_by_name` 提供同名或等价实现。
+
+| Reed / `q_function_by_name` 名称 | libCEED 注册名 | 说明 |
 |---|---|---|
-| `Mass1DBuild` | 1D 质量算子 qdata 构建 | 已实现 |
-| `MassApply` | 质量算子作用 | 已实现 |
-| `Poisson1DApply` | 1D Poisson/扩散作用 | 已实现 |
+| `Mass1DBuild` / `Mass2DBuild` / `Mass3DBuild` | 同名 | 质量矩阵积分数据 |
+| `MassApply` | 同名 | 标量质量作用 |
+| `Poisson1DApply` / `Poisson2DBuild` / `Poisson2DApply` / `Poisson3DBuild` / `Poisson3DApply` | 同名 | Poisson 路径 |
+| `Identity` | `Identity` | 插值场逐点拷贝（默认 1 分量；`Identity::with_components(n)` 用于多分量） |
+| `Identity to scalar` | `Identity to scalar` | 保留每点第一分量（默认输入 3 分量；`IdentityScalar::with_input_components(n)`） |
+| `Scale` | `Scale` | `output = alpha * input`，`alpha` 为 8 字节 `f64` LE 上下文 |
+| `Scale (scalar)` | `Scale (scalar)` | 与 `Scale` 同核，保留 libCEED 双注册名 |
+| `Vector3MassApply` | 同名 | 3 分量质量作用 |
+| `Vector3Poisson1DApply` / `Vector3Poisson2DApply` / `Vector3Poisson3DApply` | 同名 | 3 分量 Poisson 梯度作用 |
+| `Vec2Dot` / `Vec3Dot` | （Reed 扩展） | 插值向量点积，便于示例与测试 |
 
 说明：
 
-- 当前 Reed 的 gallery 主要覆盖 1D 示例所需能力。
-- 若要继续对标 libCEED 的 `ex1/ex2/ex3` 多维版本，通常需要补齐：
-  - 2D/3D `MassBuild`
-  - 2D/3D `PoissonBuild`
-  - 2D/3D `PoissonApply`
-  - 更明确的组合算子支持策略
+- **`Vector3Poisson2DApply`**：`qdata` 为 **4** 分量 / 点，与 Reed 已有 `Poisson2DApply` / `Poisson2DBuild` 一致；libCEED 注册为 **3** 对称分量，迁移时需注意打包格式。
+- **复合算子**：`CompositeOperator` 实现子算子之和的 `apply` / `apply_add` / `linear_assemble_diagonal`（与 libCEED 加法组合一致）；不含 libCEED 的其它组合模式（如嵌套网格专用 API）。
 
 ## 6. API 风格对照
 
@@ -249,12 +261,15 @@ Reed 对应：
 
 | 能力 | libCEED | Reed 当前状态 |
 |---|---|---|
-| 多维 gallery qfunction | 完整 | 部分缺失 |
-| QFunctionContext | 支持 | 缺失 |
-| 更丰富 basis 类型 | 支持 | 主要是 tensor H1 Lagrange |
-| 更丰富 backend | 多 backend | 当前主要 CPU |
-| 更完整 resource 兼容 | 丰富 | 当前只接受 `/cpu/self`、`/cpu/self/ref` |
+| 多维 gallery qfunction | 完整 | 已覆盖 libCEED `ceed-gallery-list.h` 中列出的名称（外加 `Vec2Dot`/`Vec3Dot`）；AtPoints 专用核等仍少 |
+| 复合算子 | `CeedCompositeOperator` | 已有加法型 `CompositeOperator` |
+| QFunctionContext | 支持 | 已有字节上下文；设备同步/注册字段未做 |
+| 更丰富 basis 类型 | 支持 | tensor H1 Lagrange + simplex H1；`EvalMode::{Div,Curl}`（H1 向量微分；非 Nédélec 空间） |
+| 更丰富 backend | 多 backend | CPU 为主；WGPU 渐进；CUDA/HIP 占位 |
+| 更完整 resource 兼容 | 丰富 | 当前主要 `/cpu/self`、`/cpu/self/ref`，可选 `/gpu/wgpu` |
 | 更复杂 operator 组合 | 支持 | 当前基础能力已具备，但接口和示例还需扩展 |
+| WGPU 与 CPU 张量 H1 基 | — | `Interp` / `Grad` / `Div` / `Curl`（含转置、交错积分点布局）在 `f32` 上由集成测试与 CPU 对齐；算子内 QFunction 等仍以 CPU 为主 |
+| WGPU 与 CPU 元限制 | — | offset 型 `ElemRestriction` 的 `NoTranspose` / `Transpose` 在 `f32` 上可走 GPU；`Transpose` 为单线程 scatter（与 `atomicCompareExchange` 不可用的后端兼容） |
 
 ## 9. 后续维护建议
 
