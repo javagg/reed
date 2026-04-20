@@ -2,17 +2,14 @@
 //!
 //! Reed field layouts follow the same interleaved quadrature indexing as other gallery QFs.
 
+use super::helpers::scale_alpha_from_libceed_context;
 use reed_core::{
     enums::EvalMode,
     error::ReedResult,
     qfunction::{QFunctionField, QFunctionTrait},
+    scalar::Scalar,
     ReedError,
 };
-
-fn read_f64_le(ctx: &[u8]) -> f64 {
-    let b: [u8; 8] = ctx[0..8].try_into().unwrap_or([0u8; 8]);
-    f64::from_le_bytes(b)
-}
 
 // --- Identity -------------------------------------------------------------
 
@@ -46,7 +43,7 @@ impl Default for Identity {
     }
 }
 
-impl QFunctionTrait<f64> for Identity {
+impl<T: Scalar> QFunctionTrait<T> for Identity {
     fn inputs(&self) -> &[QFunctionField] {
         &self.inputs
     }
@@ -59,8 +56,8 @@ impl QFunctionTrait<f64> for Identity {
         &self,
         _ctx: &[u8],
         q: usize,
-        inputs: &[&[f64]],
-        outputs: &mut [&mut [f64]],
+        inputs: &[&[T]],
+        outputs: &mut [&mut [T]],
     ) -> ReedResult<()> {
         if inputs.len() != 1 || outputs.len() != 1 {
             return Err(ReedError::QFunction(
@@ -113,7 +110,7 @@ impl Default for IdentityScalar {
     }
 }
 
-impl QFunctionTrait<f64> for IdentityScalar {
+impl<T: Scalar> QFunctionTrait<T> for IdentityScalar {
     fn inputs(&self) -> &[QFunctionField] {
         &self.inputs
     }
@@ -126,8 +123,8 @@ impl QFunctionTrait<f64> for IdentityScalar {
         &self,
         _ctx: &[u8],
         q: usize,
-        inputs: &[&[f64]],
-        outputs: &mut [&mut [f64]],
+        inputs: &[&[T]],
+        outputs: &mut [&mut [T]],
     ) -> ReedResult<()> {
         if inputs.len() != 1 || outputs.len() != 1 {
             return Err(ReedError::QFunction(
@@ -151,7 +148,7 @@ impl QFunctionTrait<f64> for IdentityScalar {
 
 // --- Scale ----------------------------------------------------------------
 
-/// `"Scale"` — multiply every input value by `alpha` from context (`f64` LE, 8 bytes).
+/// `"Scale"` — multiply every input value by `alpha` from context (`f64` LE, 8 bytes; cast to `T`).
 #[derive(Clone)]
 pub struct Scale {
     inputs: Vec<QFunctionField>,
@@ -181,7 +178,7 @@ impl Default for Scale {
     }
 }
 
-impl QFunctionTrait<f64> for Scale {
+impl<T: Scalar> QFunctionTrait<T> for Scale {
     fn context_byte_len(&self) -> usize {
         8
     }
@@ -198,20 +195,15 @@ impl QFunctionTrait<f64> for Scale {
         &self,
         ctx: &[u8],
         q: usize,
-        inputs: &[&[f64]],
-        outputs: &mut [&mut [f64]],
+        inputs: &[&[T]],
+        outputs: &mut [&mut [T]],
     ) -> ReedResult<()> {
-        if ctx.len() < 8 {
-            return Err(ReedError::QFunction(
-                "Scale expects 8-byte context (f64 LE scale)".into(),
-            ));
-        }
+        let alpha = scale_alpha_from_libceed_context::<T>(ctx)?;
         if inputs.len() != 1 || outputs.len() != 1 {
             return Err(ReedError::QFunction(
                 "Scale expects 1 input and 1 output".into(),
             ));
         }
-        let alpha = read_f64_le(ctx);
         let ncomp = self.inputs[0].num_comp;
         let u = inputs[0];
         let v = &mut outputs[0];
@@ -239,27 +231,27 @@ impl Default for ScaleScalar {
     }
 }
 
-impl QFunctionTrait<f64> for ScaleScalar {
+impl<T: Scalar> QFunctionTrait<T> for ScaleScalar {
     fn context_byte_len(&self) -> usize {
-        self.inner.context_byte_len()
+        <Scale as QFunctionTrait<T>>::context_byte_len(&self.inner)
     }
 
     fn inputs(&self) -> &[QFunctionField] {
-        self.inner.inputs()
+        <Scale as QFunctionTrait<T>>::inputs(&self.inner)
     }
 
     fn outputs(&self) -> &[QFunctionField] {
-        self.inner.outputs()
+        <Scale as QFunctionTrait<T>>::outputs(&self.inner)
     }
 
     fn apply(
         &self,
         ctx: &[u8],
         q: usize,
-        inputs: &[&[f64]],
-        outputs: &mut [&mut [f64]],
+        inputs: &[&[T]],
+        outputs: &mut [&mut [T]],
     ) -> ReedResult<()> {
-        self.inner.apply(ctx, q, inputs, outputs)
+        <Scale as QFunctionTrait<T>>::apply(&self.inner, ctx, q, inputs, outputs)
     }
 }
 
@@ -296,7 +288,7 @@ impl Vector3MassApply {
     }
 }
 
-impl QFunctionTrait<f64> for Vector3MassApply {
+impl<T: Scalar> QFunctionTrait<T> for Vector3MassApply {
     fn inputs(&self) -> &[QFunctionField] {
         &self.inputs
     }
@@ -309,8 +301,8 @@ impl QFunctionTrait<f64> for Vector3MassApply {
         &self,
         _ctx: &[u8],
         q: usize,
-        inputs: &[&[f64]],
-        outputs: &mut [&mut [f64]],
+        inputs: &[&[T]],
+        outputs: &mut [&mut [T]],
     ) -> ReedResult<()> {
         if inputs.len() != 2 || outputs.len() != 1 {
             return Err(ReedError::QFunction(
@@ -366,7 +358,7 @@ impl Vector3Poisson1DApply {
     }
 }
 
-impl QFunctionTrait<f64> for Vector3Poisson1DApply {
+impl<T: Scalar> QFunctionTrait<T> for Vector3Poisson1DApply {
     fn inputs(&self) -> &[QFunctionField] {
         &self.inputs
     }
@@ -379,8 +371,8 @@ impl QFunctionTrait<f64> for Vector3Poisson1DApply {
         &self,
         _ctx: &[u8],
         q: usize,
-        inputs: &[&[f64]],
-        outputs: &mut [&mut [f64]],
+        inputs: &[&[T]],
+        outputs: &mut [&mut [T]],
     ) -> ReedResult<()> {
         if inputs.len() != 2 || outputs.len() != 1 {
             return Err(ReedError::QFunction(
@@ -439,7 +431,7 @@ impl Vector3Poisson2DApply {
     }
 }
 
-impl QFunctionTrait<f64> for Vector3Poisson2DApply {
+impl<T: Scalar> QFunctionTrait<T> for Vector3Poisson2DApply {
     fn inputs(&self) -> &[QFunctionField] {
         &self.inputs
     }
@@ -452,8 +444,8 @@ impl QFunctionTrait<f64> for Vector3Poisson2DApply {
         &self,
         _ctx: &[u8],
         q: usize,
-        inputs: &[&[f64]],
-        outputs: &mut [&mut [f64]],
+        inputs: &[&[T]],
+        outputs: &mut [&mut [T]],
     ) -> ReedResult<()> {
         if inputs.len() != 2 || outputs.len() != 1 {
             return Err(ReedError::QFunction(
@@ -516,7 +508,7 @@ impl Vector3Poisson3DApply {
     }
 }
 
-impl QFunctionTrait<f64> for Vector3Poisson3DApply {
+impl<T: Scalar> QFunctionTrait<T> for Vector3Poisson3DApply {
     fn inputs(&self) -> &[QFunctionField] {
         &self.inputs
     }
@@ -529,8 +521,8 @@ impl QFunctionTrait<f64> for Vector3Poisson3DApply {
         &self,
         _ctx: &[u8],
         q: usize,
-        inputs: &[&[f64]],
-        outputs: &mut [&mut [f64]],
+        inputs: &[&[T]],
+        outputs: &mut [&mut [T]],
     ) -> ReedResult<()> {
         if inputs.len() != 2 || outputs.len() != 1 {
             return Err(ReedError::QFunction(

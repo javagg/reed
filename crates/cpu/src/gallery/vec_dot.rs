@@ -2,6 +2,7 @@ use reed_core::{
     enums::EvalMode,
     error::ReedResult,
     qfunction::{QFunctionField, QFunctionTrait},
+    scalar::Scalar,
     ReedError,
 };
 
@@ -41,7 +42,7 @@ impl Default for Vec2Dot {
     }
 }
 
-impl QFunctionTrait<f64> for Vec2Dot {
+impl<T: Scalar> QFunctionTrait<T> for Vec2Dot {
     fn inputs(&self) -> &[QFunctionField] {
         &self.inputs
     }
@@ -54,8 +55,8 @@ impl QFunctionTrait<f64> for Vec2Dot {
         &self,
         _ctx: &[u8],
         q: usize,
-        inputs: &[&[f64]],
-        outputs: &mut [&mut [f64]],
+        inputs: &[&[T]],
+        outputs: &mut [&mut [T]],
     ) -> ReedResult<()> {
         if inputs.len() != 2 || outputs.len() != 1 {
             return Err(ReedError::QFunction(
@@ -108,7 +109,7 @@ impl Default for Vec3Dot {
     }
 }
 
-impl QFunctionTrait<f64> for Vec3Dot {
+impl<T: Scalar> QFunctionTrait<T> for Vec3Dot {
     fn inputs(&self) -> &[QFunctionField] {
         &self.inputs
     }
@@ -121,8 +122,8 @@ impl QFunctionTrait<f64> for Vec3Dot {
         &self,
         _ctx: &[u8],
         q: usize,
-        inputs: &[&[f64]],
-        outputs: &mut [&mut [f64]],
+        inputs: &[&[T]],
+        outputs: &mut [&mut [T]],
     ) -> ReedResult<()> {
         if inputs.len() != 2 || outputs.len() != 1 {
             return Err(ReedError::QFunction(

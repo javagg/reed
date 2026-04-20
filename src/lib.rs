@@ -268,10 +268,9 @@ impl<T: Scalar> Reed<T> {
             closure,
         )))
     }
-}
 
-impl Reed<f64> {
-    pub fn q_function_by_name(&self, name: &str) -> ReedResult<Box<dyn QFunctionTrait<f64>>> {
+    /// CPU gallery QFunction by libCEED-compatible name (see `reed_cpu::gallery` and `design_mapping.md`).
+    pub fn q_function_by_name(&self, name: &str) -> ReedResult<Box<dyn QFunctionTrait<T>>> {
         let _ = self;
         q_function_by_name(name)
     }

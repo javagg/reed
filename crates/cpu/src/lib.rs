@@ -1,10 +1,9 @@
 //! Host CPU backend: [`CpuBackend`] implements [`reed_core::reed::Backend`] for any [`Scalar`]
 //! (`f32` / `f64`) on vectors, restrictions, bases, and [`operator::CpuOperator`].
 //!
-//! Gallery QFunctions from [`q_function_by_name`] are implemented for **`f64`** (matching typical
-//! libCEED double-precision examples). For **`f32`** kernels, use
-//! [`ClosureQFunction`](reed_core::qfunction::ClosureQFunction) with `Reed::q_function_interior` on
-//! the `reed` crate (user-defined QFunctions, analogous to libCEED).
+//! Gallery QFunctions from [`q_function_by_name`] implement [`QFunctionTrait`] for any [`Scalar`]
+//! (`f32` / `f64`). libCEED-style contexts that embed `f64` (e.g. [`Scale`](gallery::Scale)) are read
+//! as little-endian doubles and cast to `T`.
 
 pub mod basis_lagrange;
 pub mod basis_simplex;
@@ -115,7 +114,7 @@ impl<T: Scalar> Backend<T> for CpuBackend<T> {
     }
 }
 
-pub fn q_function_by_name(name: &str) -> ReedResult<Box<dyn QFunctionTrait<f64>>> {
+pub fn q_function_by_name<T: Scalar>(name: &str) -> ReedResult<Box<dyn QFunctionTrait<T>>> {
     match name {
         "Mass1DBuild" => Ok(Box::new(Mass1DBuild::default())),
         "Mass2DBuild" => Ok(Box::new(Mass2DBuild::default())),

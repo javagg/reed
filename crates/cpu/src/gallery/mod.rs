@@ -1,4 +1,5 @@
 mod ceed_gallery;
+mod helpers;
 mod mass;
 mod poisson;
 mod vec_dot;

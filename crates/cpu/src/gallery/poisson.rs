@@ -1,7 +1,9 @@
+use super::helpers::singular_jacobian_tol;
 use reed_core::{
     enums::EvalMode,
     error::ReedResult,
     qfunction::{QFunctionField, QFunctionTrait},
+    scalar::Scalar,
     ReedError,
 };
 
@@ -36,7 +38,7 @@ impl Default for Poisson1DBuild {
     }
 }
 
-impl QFunctionTrait<f64> for Poisson1DBuild {
+impl<T: Scalar> QFunctionTrait<T> for Poisson1DBuild {
     fn inputs(&self) -> &[QFunctionField] {
         &self.inputs
     }
@@ -49,8 +51,8 @@ impl QFunctionTrait<f64> for Poisson1DBuild {
         &self,
         _ctx: &[u8],
         q: usize,
-        inputs: &[&[f64]],
-        outputs: &mut [&mut [f64]],
+        inputs: &[&[T]],
+        outputs: &mut [&mut [T]],
     ) -> ReedResult<()> {
         if inputs.len() != 2 || outputs.len() != 1 {
             return Err(ReedError::QFunction(
@@ -65,9 +67,10 @@ impl QFunctionTrait<f64> for Poisson1DBuild {
                 "Poisson1DBuild: buffer length mismatch".into(),
             ));
         }
+        let tol: T = singular_jacobian_tol();
         for i in 0..q {
             let j = dx[i];
-            if j.abs() < 1.0e-14 {
+            if j.abs() < tol {
                 return Err(ReedError::QFunction(
                     "Poisson1DBuild encountered near-singular Jacobian".into(),
                 ));
@@ -117,7 +120,7 @@ impl Default for Poisson2DBuild {
     }
 }
 
-impl QFunctionTrait<f64> for Poisson2DBuild {
+impl<T: Scalar> QFunctionTrait<T> for Poisson2DBuild {
     fn inputs(&self) -> &[QFunctionField] {
         &self.inputs
     }
@@ -126,7 +129,13 @@ impl QFunctionTrait<f64> for Poisson2DBuild {
         &self.outputs
     }
 
-    fn apply(&self, _ctx: &[u8], q: usize, inputs: &[&[f64]], outputs: &mut [&mut [f64]]) -> ReedResult<()> {
+    fn apply(
+        &self,
+        _ctx: &[u8],
+        q: usize,
+        inputs: &[&[T]],
+        outputs: &mut [&mut [T]],
+    ) -> ReedResult<()> {
         if inputs.len() != 2 || outputs.len() != 1 {
             return Err(ReedError::QFunction(
                 "Poisson2DBuild expects 2 inputs and 1 output".into(),
@@ -135,13 +144,14 @@ impl QFunctionTrait<f64> for Poisson2DBuild {
         let dx = inputs[0];
         let weights = inputs[1];
         let qdata = &mut outputs[0];
+        let tol: T = singular_jacobian_tol();
         for i in 0..q {
             let j00 = dx[i * 4];
             let j01 = dx[i * 4 + 1];
             let j10 = dx[i * 4 + 2];
             let j11 = dx[i * 4 + 3];
             let det_j = j00 * j11 - j01 * j10;
-            if det_j.abs() < 1.0e-14 {
+            if det_j.abs() < tol {
                 return Err(ReedError::QFunction(
                     "Poisson2DBuild encountered near-singular Jacobian".into(),
                 ));
@@ -201,7 +211,7 @@ impl Default for Poisson2DApply {
     }
 }
 
-impl QFunctionTrait<f64> for Poisson2DApply {
+impl<T: Scalar> QFunctionTrait<T> for Poisson2DApply {
     fn inputs(&self) -> &[QFunctionField] {
         &self.inputs
     }
@@ -210,7 +220,13 @@ impl QFunctionTrait<f64> for Poisson2DApply {
         &self.outputs
     }
 
-    fn apply(&self, _ctx: &[u8], q: usize, inputs: &[&[f64]], outputs: &mut [&mut [f64]]) -> ReedResult<()> {
+    fn apply(
+        &self,
+        _ctx: &[u8],
+        q: usize,
+        inputs: &[&[T]],
+        outputs: &mut [&mut [T]],
+    ) -> ReedResult<()> {
         if inputs.len() != 2 || outputs.len() != 1 {
             return Err(ReedError::QFunction(
                 "Poisson2DApply expects 2 inputs and 1 output".into(),
@@ -257,7 +273,7 @@ impl Default for Poisson3DBuild {
     }
 }
 
-impl QFunctionTrait<f64> for Poisson3DBuild {
+impl<T: Scalar> QFunctionTrait<T> for Poisson3DBuild {
     fn inputs(&self) -> &[QFunctionField] {
         &self.inputs
     }
@@ -266,7 +282,13 @@ impl QFunctionTrait<f64> for Poisson3DBuild {
         &self.outputs
     }
 
-    fn apply(&self, _ctx: &[u8], q: usize, inputs: &[&[f64]], outputs: &mut [&mut [f64]]) -> ReedResult<()> {
+    fn apply(
+        &self,
+        _ctx: &[u8],
+        q: usize,
+        inputs: &[&[T]],
+        outputs: &mut [&mut [T]],
+    ) -> ReedResult<()> {
         if inputs.len() != 2 || outputs.len() != 1 {
             return Err(ReedError::QFunction(
                 "Poisson3DBuild expects 2 inputs and 1 output".into(),
@@ -275,6 +297,7 @@ impl QFunctionTrait<f64> for Poisson3DBuild {
         let dx = inputs[0];
         let weights = inputs[1];
         let qdata = &mut outputs[0];
+        let tol: T = singular_jacobian_tol();
         for i in 0..q {
             let j00 = dx[i * 9];
             let j01 = dx[i * 9 + 1];
@@ -297,7 +320,7 @@ impl QFunctionTrait<f64> for Poisson3DBuild {
             let c22 = j00 * j11 - j01 * j10;
 
             let det_j = j00 * c00 + j01 * c01 + j02 * c02;
-            if det_j.abs() < 1.0e-14 {
+            if det_j.abs() < tol {
                 return Err(ReedError::QFunction(
                     "Poisson3DBuild encountered near-singular Jacobian".into(),
                 ));
@@ -352,7 +375,7 @@ impl Default for Poisson3DApply {
     }
 }
 
-impl QFunctionTrait<f64> for Poisson3DApply {
+impl<T: Scalar> QFunctionTrait<T> for Poisson3DApply {
     fn inputs(&self) -> &[QFunctionField] {
         &self.inputs
     }
@@ -361,7 +384,13 @@ impl QFunctionTrait<f64> for Poisson3DApply {
         &self.outputs
     }
 
-    fn apply(&self, _ctx: &[u8], q: usize, inputs: &[&[f64]], outputs: &mut [&mut [f64]]) -> ReedResult<()> {
+    fn apply(
+        &self,
+        _ctx: &[u8],
+        q: usize,
+        inputs: &[&[T]],
+        outputs: &mut [&mut [T]],
+    ) -> ReedResult<()> {
         if inputs.len() != 2 || outputs.len() != 1 {
             return Err(ReedError::QFunction(
                 "Poisson3DApply expects 2 inputs and 1 output".into(),
@@ -416,7 +445,7 @@ impl Default for Poisson1DApply {
     }
 }
 
-impl QFunctionTrait<f64> for Poisson1DApply {
+impl<T: Scalar> QFunctionTrait<T> for Poisson1DApply {
     fn inputs(&self) -> &[QFunctionField] {
         &self.inputs
     }
@@ -425,7 +454,13 @@ impl QFunctionTrait<f64> for Poisson1DApply {
         &self.outputs
     }
 
-    fn apply(&self, _ctx: &[u8], q: usize, inputs: &[&[f64]], outputs: &mut [&mut [f64]]) -> ReedResult<()> {
+    fn apply(
+        &self,
+        _ctx: &[u8],
+        q: usize,
+        inputs: &[&[T]],
+        outputs: &mut [&mut [T]],
+    ) -> ReedResult<()> {
         if inputs.len() != 2 || outputs.len() != 1 {
             return Err(ReedError::QFunction(
                 "Poisson1DApply expects 2 inputs and 1 output".into(),
@@ -444,6 +479,7 @@ impl QFunctionTrait<f64> for Poisson1DApply {
 #[cfg(test)]
 mod poisson1d_build_tests {
     use super::*;
+    use reed_core::qfunction::QFunctionTrait;
 
     #[test]
     fn poisson1d_build_matches_libceed() {
@@ -454,5 +490,17 @@ mod poisson1d_build_tests {
         b.apply(&[], 2, &[dx.as_slice(), w.as_slice()], &mut [&mut qdata])
             .unwrap();
         assert_eq!(qdata, vec![0.25, 0.25]);
+    }
+
+    #[test]
+    fn poisson1d_build_f32() {
+        let b = Poisson1DBuild::default();
+        let dx = vec![2.0f32, 2.0];
+        let w = vec![0.5f32, 0.5];
+        let mut qdata = vec![0.0f32; 2];
+        b.apply(&[], 2, &[dx.as_slice(), w.as_slice()], &mut [&mut qdata])
+            .unwrap();
+        assert!((qdata[0] - 0.25).abs() < 1e-5);
+        assert!((qdata[1] - 0.25).abs() < 1e-5);
     }
 }
