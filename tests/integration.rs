@@ -88,19 +88,46 @@ fn test_poisson_1d_apply() {
     let ndofs = nelem + 1;
 
     let node_coords = vec![-1.0, 0.0, 1.0];
-    let b_u = reed
-        .basis_tensor_h1_lagrange(1, 1, p, q, QuadMode::Gauss)
-        .unwrap();
-    let qdata_values = build_poisson_qdata(&node_coords, b_u.q_weights());
-    let qdata = reed.vector_from_slice(&qdata_values).unwrap();
+    let x_coord = reed.vector_from_slice(&node_coords).unwrap();
+    let mut qdata = reed.vector(nelem * q).unwrap();
+    qdata.set_value(0.0).unwrap();
 
+    let ind_x = vec![0, 1, 1, 2];
     let ind_u = vec![0, 1, 1, 2];
+
+    let r_x = reed
+        .elem_restriction(nelem, 2, 1, 1, ndofs, &ind_x)
+        .unwrap();
     let r_u = reed
         .elem_restriction(nelem, p, 1, 1, ndofs, &ind_u)
         .unwrap();
     let r_q = reed
         .strided_elem_restriction(nelem, q, 1, nelem * q, [1, q as i32, q as i32])
         .unwrap();
+
+    let b_x = reed
+        .basis_tensor_h1_lagrange(1, 1, 2, q, QuadMode::Gauss)
+        .unwrap();
+    let b_u = reed
+        .basis_tensor_h1_lagrange(1, 1, p, q, QuadMode::Gauss)
+        .unwrap();
+
+    let build_poisson = reed
+        .operator_builder()
+        .qfunction(reed.q_function_by_name("Poisson1DBuild").unwrap())
+        .field("dx", Some(&*r_x), Some(&*b_x), FieldVector::Active)
+        .field("weights", None, Some(&*b_x), FieldVector::None)
+        .field("qdata", Some(&*r_q), None, FieldVector::Active)
+        .build()
+        .unwrap();
+    build_poisson.apply(&*x_coord, &mut *qdata).unwrap();
+
+    let expected_qdata = build_poisson_qdata(&node_coords, b_u.q_weights());
+    let mut got_qdata = vec![0.0_f64; nelem * q];
+    qdata.copy_to_slice(&mut got_qdata).unwrap();
+    for (a, b) in got_qdata.iter().zip(expected_qdata.iter()) {
+        assert!((a - b).abs() < 1.0e-12);
+    }
 
     let op_poisson = reed
         .operator_builder()

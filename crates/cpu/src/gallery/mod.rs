@@ -9,6 +9,6 @@ pub use ceed_gallery::{
 };
 pub use mass::{Mass1DBuild, Mass2DBuild, Mass3DBuild, MassApply};
 pub use poisson::{
-	Poisson1DApply, Poisson2DApply, Poisson2DBuild, Poisson3DApply, Poisson3DBuild,
+    Poisson1DApply, Poisson1DBuild, Poisson2DApply, Poisson2DBuild, Poisson3DApply, Poisson3DBuild,
 };
 pub use vec_dot::{Vec2Dot, Vec3Dot};

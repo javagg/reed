@@ -5,6 +5,79 @@ use reed_core::{
     ReedError,
 };
 
+/// `"Poisson1DBuild"` — geometric factor for the 1D Poisson stiffness (`qdata[i] = weights[i] / dx[i]`),
+/// matching libCEED `ceed-poisson1dbuild.h` (`J` is the 1×1 Jacobian from `CEED_EVAL_GRAD`).
+pub struct Poisson1DBuild {
+    inputs: Vec<QFunctionField>,
+    outputs: Vec<QFunctionField>,
+}
+
+impl Default for Poisson1DBuild {
+    fn default() -> Self {
+        Self {
+            inputs: vec![
+                QFunctionField {
+                    name: "dx".into(),
+                    num_comp: 1,
+                    eval_mode: EvalMode::Grad,
+                },
+                QFunctionField {
+                    name: "weights".into(),
+                    num_comp: 1,
+                    eval_mode: EvalMode::Weight,
+                },
+            ],
+            outputs: vec![QFunctionField {
+                name: "qdata".into(),
+                num_comp: 1,
+                eval_mode: EvalMode::None,
+            }],
+        }
+    }
+}
+
+impl QFunctionTrait<f64> for Poisson1DBuild {
+    fn inputs(&self) -> &[QFunctionField] {
+        &self.inputs
+    }
+
+    fn outputs(&self) -> &[QFunctionField] {
+        &self.outputs
+    }
+
+    fn apply(
+        &self,
+        _ctx: &[u8],
+        q: usize,
+        inputs: &[&[f64]],
+        outputs: &mut [&mut [f64]],
+    ) -> ReedResult<()> {
+        if inputs.len() != 2 || outputs.len() != 1 {
+            return Err(ReedError::QFunction(
+                "Poisson1DBuild expects 2 inputs and 1 output".into(),
+            ));
+        }
+        let dx = inputs[0];
+        let weights = inputs[1];
+        let qdata = &mut outputs[0];
+        if dx.len() != q || weights.len() != q || qdata.len() != q {
+            return Err(ReedError::QFunction(
+                "Poisson1DBuild: buffer length mismatch".into(),
+            ));
+        }
+        for i in 0..q {
+            let j = dx[i];
+            if j.abs() < 1.0e-14 {
+                return Err(ReedError::QFunction(
+                    "Poisson1DBuild encountered near-singular Jacobian".into(),
+                ));
+            }
+            qdata[i] = weights[i] / j;
+        }
+        Ok(())
+    }
+}
+
 pub struct Poisson1DApply {
     inputs: Vec<QFunctionField>,
     outputs: Vec<QFunctionField>,
@@ -365,5 +438,21 @@ impl QFunctionTrait<f64> for Poisson1DApply {
             dv[i] = du[i] * qdata[i];
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod poisson1d_build_tests {
+    use super::*;
+
+    #[test]
+    fn poisson1d_build_matches_libceed() {
+        let b = Poisson1DBuild::default();
+        let dx = vec![2.0, 2.0];
+        let w = vec![0.5, 0.5];
+        let mut qdata = vec![0.0; 2];
+        b.apply(&[], 2, &[dx.as_slice(), w.as_slice()], &mut [&mut qdata])
+            .unwrap();
+        assert_eq!(qdata, vec![0.25, 0.25]);
     }
 }

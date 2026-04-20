@@ -25,8 +25,8 @@ use vector::CpuVector;
 pub use composite_operator::CompositeOperator;
 pub use gallery::{
     Identity, IdentityScalar, Mass1DBuild, Mass2DBuild, Mass3DBuild, MassApply, Poisson1DApply,
-    Poisson2DApply, Poisson2DBuild, Poisson3DApply, Poisson3DBuild, Scale, ScaleScalar, Vec2Dot,
-    Vec3Dot, Vector3MassApply, Vector3Poisson1DApply, Vector3Poisson2DApply,
+    Poisson1DBuild, Poisson2DApply, Poisson2DBuild, Poisson3DApply, Poisson3DBuild, Scale,
+    ScaleScalar, Vec2Dot, Vec3Dot, Vector3MassApply, Vector3Poisson1DApply, Vector3Poisson2DApply,
     Vector3Poisson3DApply,
 };
 pub use operator::{CpuOperator, FieldVector, OperatorBuilder};
@@ -114,6 +114,7 @@ pub fn q_function_by_name(name: &str) -> ReedResult<Box<dyn QFunctionTrait<f64>>
         "Mass3DBuild" => Ok(Box::new(Mass3DBuild::default())),
         "MassApply" => Ok(Box::new(MassApply::default())),
         "Poisson1DApply" => Ok(Box::new(Poisson1DApply::default())),
+        "Poisson1DBuild" => Ok(Box::new(Poisson1DBuild::default())),
         "Poisson2DBuild" => Ok(Box::new(Poisson2DBuild::default())),
         "Poisson2DApply" => Ok(Box::new(Poisson2DApply::default())),
         "Poisson3DBuild" => Ok(Box::new(Poisson3DBuild::default())),
