@@ -271,7 +271,7 @@ libCEED 内置 gallery 名称见上游 `gallery/ceed-gallery-list.h`（`CeedQFun
 | 多维 gallery qfunction | 完整 | 已覆盖 libCEED `ceed-gallery-list.h` 中列出的名称（外加 `Vec2Dot`/`Vec3Dot`）；AtPoints 专用核等仍少 |
 | 复合算子 | `CeedCompositeOperator` | 已有加法型 `CompositeOperator` |
 | QFunctionContext | 支持 | 已有字节上下文；设备同步/注册字段未做 |
-| 更丰富 basis 类型 | 支持 | tensor H1 Lagrange + 三角形/四面体 simplex H1–P2；`EvalMode::{Div,Curl}`（H1 向量微分；非 Nédélec 空间）。更高阶 simplex、棱柱/楔、金字塔等仍可作为后续扩展 |
+| 更丰富 basis 类型 | 支持 | tensor H1 Lagrange + 三角形/四面体 simplex H1–**P3**；`EvalMode::{Div,Curl}`（H1 向量微分；非 Nédélec 空间）。棱柱/楔、金字塔等仍可作为后续扩展 |
 | 更丰富 backend | 多 backend | CPU 为主；WGPU 渐进；CUDA/HIP 占位 |
 | 更完整 resource 兼容 | 丰富 | 当前主要 `/cpu/self`、`/cpu/self/ref`，可选 `/gpu/wgpu` |
 | 更复杂 operator 组合 | 支持 | 当前基础能力已具备，但接口和示例还需扩展 |

@@ -7,8 +7,10 @@
 //! |------|----------|------|-------------------------------|
 //! | P1 triangle | Tri3 | 3 | linear |
 //! | P2 triangle | Tri6 | 6 | quadratic |
+//! | P3 triangle | Tri10 | 10 | cubic |
 //! | P1 tet | Tet4 | 4 | linear |
 //! | P2 tet | Tet10 | 10 | quadratic |
+//! | P3 tet | Tet20 | 20 | cubic |
 //!
 //! ## Reference elements
 //!
@@ -28,6 +30,10 @@
 //! | 6 | 4 | — | — |
 //! | 7 | 5 | — | — |
 //!
+//! **P3 triangle** needs at least `q = 4` (degree-3 exact) for typical variational integrals; `q = 6`
+//! integrates degree 4 (e.g. `∇P3 · ∇P3`). **P3 tet** uses the same `q` table; for degree-5 exactness
+//! on tets use `q = 5` (Keast) or higher-order rules as added in the future.
+//!
 //! ## Memory layout (matches [`LagrangeBasis`](super::basis_lagrange::LagrangeBasis))
 //!
 //! * `interp`  — row-major `[nqpts × num_dof]`
@@ -41,12 +47,16 @@
 //!   (`qcomp = ncomp*dim`, layout `v[qpt*qcomp + comp*dim + d]`)
 //! * Weight         : `v=[nqpts]` (per element, repeated `num_elem` times)
 
+#[path = "simplex_p3_data.rs"]
+mod simplex_p3_data;
+
 use reed_core::{
     basis::BasisTrait,
     enums::{ElemTopology, EvalMode},
     error::{ReedError, ReedResult},
     scalar::Scalar,
 };
+use simplex_p3_data::{TET_P3_COEFF, TET_P3_EXP, TRI_P3_COEFF};
 
 #[cfg(feature = "parallel")]
 const PAR_MIN_ELEMS_PER_TASK: usize = 128;
@@ -76,7 +86,7 @@ impl<T: Scalar> SimplexBasis<T> {
     ///
     /// # Parameters
     /// * `topo`  — element topology (`ElemTopology::Triangle` or `ElemTopology::Tet`).
-    /// * `poly`  — polynomial order (1 = P1, 2 = P2).
+    /// * `poly`  — polynomial order (1 = P1, 2 = P2, 3 = P3).
     /// * `ncomp` — number of field components (1 for scalar problems).
     /// * `q`     — number of quadrature points (see module-level table for valid
     ///             values per topology).
@@ -87,8 +97,10 @@ impl<T: Scalar> SimplexBasis<T> {
         let (dim, num_dof) = match (topo, poly) {
             (ElemTopology::Triangle, 1) => (2, 3),
             (ElemTopology::Triangle, 2) => (2, 6),
+            (ElemTopology::Triangle, 3) => (2, 10),
             (ElemTopology::Tet, 1) => (3, 4),
             (ElemTopology::Tet, 2) => (3, 10),
+            (ElemTopology::Tet, 3) => (3, 20),
             _ => {
                 return Err(ReedError::Basis(format!(
                     "SimplexBasis: unsupported (topology={:?}, poly={})",
@@ -133,8 +145,10 @@ impl<T: Scalar> SimplexBasis<T> {
             let (phi, dphi) = match (topo, poly) {
                 (ElemTopology::Triangle, 1) => tri_p1_basis(pt[0], pt[1]),
                 (ElemTopology::Triangle, 2) => tri_p2_basis(pt[0], pt[1]),
+                (ElemTopology::Triangle, 3) => tri_p3_basis(pt[0], pt[1]),
                 (ElemTopology::Tet, 1) => tet_p1_basis(pt[0], pt[1], pt[2]),
                 (ElemTopology::Tet, 2) => tet_p2_basis(pt[0], pt[1], pt[2]),
+                (ElemTopology::Tet, 3) => tet_p3_basis(pt[0], pt[1], pt[2]),
                 _ => unreachable!(),
             };
             for dof in 0..num_dof {
@@ -240,10 +254,18 @@ impl<T: Scalar> SimplexBasis<T> {
 // ── BasisTrait impl ───────────────────────────────────────────────────────────
 
 impl<T: Scalar> BasisTrait<T> for SimplexBasis<T> {
-    fn dim(&self) -> usize { self.dim }
-    fn num_dof(&self) -> usize { self.num_dof }
-    fn num_qpoints(&self) -> usize { self.num_qpoints }
-    fn num_comp(&self) -> usize { self.ncomp }
+    fn dim(&self) -> usize {
+        self.dim
+    }
+    fn num_dof(&self) -> usize {
+        self.num_dof
+    }
+    fn num_qpoints(&self) -> usize {
+        self.num_qpoints
+    }
+    fn num_comp(&self) -> usize {
+        self.ncomp
+    }
 
     fn apply(
         &self,
@@ -267,14 +289,18 @@ impl<T: Scalar> BasisTrait<T> for SimplexBasis<T> {
                 };
                 check_sizes(u, in_stride * num_elem, v, out_stride * num_elem, "interp")?;
                 // zero output for accumulation in transpose path
-                if transpose { v.fill(T::ZERO); }
+                if transpose {
+                    v.fill(T::ZERO);
+                }
                 #[cfg(feature = "parallel")]
                 {
                     use rayon::prelude::*;
                     u.par_chunks(in_stride)
                         .zip(v.par_chunks_mut(out_stride))
                         .with_min_len(PAR_MIN_ELEMS_PER_TASK)
-                        .for_each(|(u_elem, v_elem)| self.apply_interp_elem(transpose, u_elem, v_elem));
+                        .for_each(|(u_elem, v_elem)| {
+                            self.apply_interp_elem(transpose, u_elem, v_elem)
+                        });
                 }
                 #[cfg(not(feature = "parallel"))]
                 {
@@ -296,14 +322,18 @@ impl<T: Scalar> BasisTrait<T> for SimplexBasis<T> {
                     self.num_qpoints * qcomp
                 };
                 check_sizes(u, in_stride * num_elem, v, out_stride * num_elem, "grad")?;
-                if transpose { v.fill(T::ZERO); }
+                if transpose {
+                    v.fill(T::ZERO);
+                }
                 #[cfg(feature = "parallel")]
                 {
                     use rayon::prelude::*;
                     u.par_chunks(in_stride)
                         .zip(v.par_chunks_mut(out_stride))
                         .with_min_len(PAR_MIN_ELEMS_PER_TASK)
-                        .for_each(|(u_elem, v_elem)| self.apply_grad_elem(transpose, u_elem, v_elem));
+                        .for_each(|(u_elem, v_elem)| {
+                            self.apply_grad_elem(transpose, u_elem, v_elem)
+                        });
                 }
                 #[cfg(not(feature = "parallel"))]
                 {
@@ -471,8 +501,12 @@ impl<T: Scalar> BasisTrait<T> for SimplexBasis<T> {
         Ok(())
     }
 
-    fn q_weights(&self) -> &[T] { &self.weights }
-    fn q_ref(&self) -> &[T] { &self.q_ref }
+    fn q_weights(&self) -> &[T] {
+        &self.weights
+    }
+    fn q_ref(&self) -> &[T] {
+        &self.q_ref
+    }
 }
 
 // ── shape functions ───────────────────────────────────────────────────────────
@@ -483,13 +517,13 @@ impl<T: Scalar> BasisTrait<T> for SimplexBasis<T> {
 /// Gradients are constant (independent of x,y).
 fn tri_p1_basis(x: f64, y: f64) -> (Vec<f64>, Vec<f64>) {
     let _ = (x, y); // gradients are constant
-    // φ₀ = 1-x-y,  φ₁ = x,  φ₂ = y
+                    // φ₀ = 1-x-y,  φ₁ = x,  φ₂ = y
     let phi = vec![1.0 - x - y, x, y];
     // ∇φ₀ = (-1,-1),  ∇φ₁ = (1,0),  ∇φ₂ = (0,1)
     let dphi = vec![
         -1.0, -1.0, // dof 0
-         1.0,  0.0, // dof 1
-         0.0,  1.0, // dof 2
+        1.0, 0.0, // dof 1
+        0.0, 1.0, // dof 2
     ];
     (phi, dphi)
 }
@@ -521,19 +555,78 @@ fn tri_p2_basis(x: f64, y: f64) -> (Vec<f64>, Vec<f64>) {
     // dl0/dx=-1, dl0/dy=-1; dl1/dx=1, dl1/dy=0; dl2/dx=0, dl2/dy=1
     let dphi = vec![
         // dof 0: φ = l0*(2l0-1)  → ∂/∂x = (-1)*(4l0-1), ∂/∂y = (-1)*(4l0-1)
-        -(4.0*l0 - 1.0), -(4.0*l0 - 1.0),
+        -(4.0 * l0 - 1.0),
+        -(4.0 * l0 - 1.0),
         // dof 1: φ = l1*(2l1-1)  → ∂/∂x = 4l1-1, ∂/∂y = 0
-        4.0*l1 - 1.0, 0.0,
+        4.0 * l1 - 1.0,
+        0.0,
         // dof 2: φ = l2*(2l2-1)  → ∂/∂x = 0, ∂/∂y = 4l2-1
-        0.0, 4.0*l2 - 1.0,
+        0.0,
+        4.0 * l2 - 1.0,
         // dof 3: φ = 4*l0*l1     → ∂/∂x = 4*(l0-l1), ∂/∂y = -4*l1
-        4.0*(l0 - l1), -4.0*l1,
+        4.0 * (l0 - l1),
+        -4.0 * l1,
         // dof 4: φ = 4*l1*l2     → ∂/∂x = 4*l2, ∂/∂y = 4*l1
-        4.0*l2, 4.0*l1,
+        4.0 * l2,
+        4.0 * l1,
         // dof 5: φ = 4*l0*l2     → ∂/∂x = -4*l2, ∂/∂y = 4*(l0-l2)
-        -4.0*l2, 4.0*(l0 - l2),
+        -4.0 * l2,
+        4.0 * (l0 - l2),
     ];
     (phi, dphi)
+}
+
+/// P3 triangle nodal Lagrange basis (10 lattice nodes, degree-3 polynomials in `x`,`y`).
+fn tri_p3_basis(x: f64, y: f64) -> (Vec<f64>, Vec<f64>) {
+    let (m, mx, my) = tri_p3_mono_val_grad(x, y);
+    let mut phi = vec![0.0_f64; 10];
+    let mut dphi = vec![0.0_f64; 20];
+    for k in 0..10 {
+        let mut pk = 0.0_f64;
+        let mut gx = 0.0_f64;
+        let mut gy = 0.0_f64;
+        for j in 0..10 {
+            let c = TRI_P3_COEFF[j][k];
+            pk += c * m[j];
+            gx += c * mx[j];
+            gy += c * my[j];
+        }
+        phi[k] = pk;
+        dphi[k * 2] = gx;
+        dphi[k * 2 + 1] = gy;
+    }
+    (phi, dphi)
+}
+
+fn tri_p3_mono_val_grad(x: f64, y: f64) -> ([f64; 10], [f64; 10], [f64; 10]) {
+    let x2 = x * x;
+    let y2 = y * y;
+    let m = [1.0, x, y, x2, x * y, y2, x2 * x, x2 * y, x * y2, y2 * y];
+    let mx = [
+        0.0,
+        1.0,
+        0.0,
+        2.0 * x,
+        y,
+        0.0,
+        3.0 * x2,
+        2.0 * x * y,
+        y2,
+        0.0,
+    ];
+    let my = [
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        x,
+        2.0 * y,
+        0.0,
+        x2,
+        2.0 * x * y,
+        3.0 * y2,
+    ];
+    (m, mx, my)
 }
 
 /// P1 tet basis: φ and ∇φ at (x,y,z).
@@ -543,10 +636,7 @@ fn tet_p1_basis(x: f64, y: f64, z: f64) -> (Vec<f64>, Vec<f64>) {
     let phi = vec![1.0 - x - y - z, x, y, z];
     // ∇φ₀=(-1,-1,-1), ∇φ₁=(1,0,0), ∇φ₂=(0,1,0), ∇φ₃=(0,0,1)
     let dphi = vec![
-        -1.0, -1.0, -1.0,
-         1.0,  0.0,  0.0,
-         0.0,  1.0,  0.0,
-         0.0,  0.0,  1.0,
+        -1.0, -1.0, -1.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0,
     ];
     let _ = (x, y, z);
     (phi, dphi)
@@ -573,41 +663,118 @@ fn tet_p2_basis(x: f64, y: f64, z: f64) -> (Vec<f64>, Vec<f64>) {
     let l2 = y;
     let l3 = z;
     let phi = vec![
-        l0 * (2.0*l0 - 1.0), // 0: V0
-        l1 * (2.0*l1 - 1.0), // 1: V1
-        l2 * (2.0*l2 - 1.0), // 2: V2
-        l3 * (2.0*l3 - 1.0), // 3: V3
-        4.0*l0*l1,           // 4: E4 midpoint V0-V1
-        4.0*l1*l2,           // 5: E5 midpoint V1-V2
-        4.0*l0*l2,           // 6: E6 midpoint V0-V2
-        4.0*l0*l3,           // 7: E7 midpoint V0-V3
-        4.0*l1*l3,           // 8: E8 midpoint V1-V3
-        4.0*l2*l3,           // 9: E9 midpoint V2-V3
+        l0 * (2.0 * l0 - 1.0), // 0: V0
+        l1 * (2.0 * l1 - 1.0), // 1: V1
+        l2 * (2.0 * l2 - 1.0), // 2: V2
+        l3 * (2.0 * l3 - 1.0), // 3: V3
+        4.0 * l0 * l1,         // 4: E4 midpoint V0-V1
+        4.0 * l1 * l2,         // 5: E5 midpoint V1-V2
+        4.0 * l0 * l2,         // 6: E6 midpoint V0-V2
+        4.0 * l0 * l3,         // 7: E7 midpoint V0-V3
+        4.0 * l1 * l3,         // 8: E8 midpoint V1-V3
+        4.0 * l2 * l3,         // 9: E9 midpoint V2-V3
     ];
     // dl0=(−1,−1,−1), dl1=(1,0,0), dl2=(0,1,0), dl3=(0,0,1)
     let dphi = vec![
         // dof 0: ∂/∂x = -(4l0-1), ∂/∂y = -(4l0-1), ∂/∂z = -(4l0-1)
-        -(4.0*l0-1.0), -(4.0*l0-1.0), -(4.0*l0-1.0),
+        -(4.0 * l0 - 1.0),
+        -(4.0 * l0 - 1.0),
+        -(4.0 * l0 - 1.0),
         // dof 1: ∂/∂x = 4l1-1, ∂/∂y = 0, ∂/∂z = 0
-        4.0*l1-1.0, 0.0, 0.0,
+        4.0 * l1 - 1.0,
+        0.0,
+        0.0,
         // dof 2: ∂/∂x = 0, ∂/∂y = 4l2-1, ∂/∂z = 0
-        0.0, 4.0*l2-1.0, 0.0,
+        0.0,
+        4.0 * l2 - 1.0,
+        0.0,
         // dof 3: ∂/∂x = 0, ∂/∂y = 0, ∂/∂z = 4l3-1
-        0.0, 0.0, 4.0*l3-1.0,
+        0.0,
+        0.0,
+        4.0 * l3 - 1.0,
         // dof 4: φ=4l0l1 → ∂/∂x=4(l0-l1), ∂/∂y=-4l1, ∂/∂z=-4l1
-        4.0*(l0-l1), -4.0*l1, -4.0*l1,
+        4.0 * (l0 - l1),
+        -4.0 * l1,
+        -4.0 * l1,
         // dof 5: φ=4l1l2 → ∂/∂x=4l2, ∂/∂y=4l1, ∂/∂z=0
-        4.0*l2, 4.0*l1, 0.0,
+        4.0 * l2,
+        4.0 * l1,
+        0.0,
         // dof 6: φ=4l0l2 → ∂/∂x=-4l2, ∂/∂y=4(l0-l2), ∂/∂z=-4l2
-        -4.0*l2, 4.0*(l0-l2), -4.0*l2,
+        -4.0 * l2,
+        4.0 * (l0 - l2),
+        -4.0 * l2,
         // dof 7: φ=4l0l3 → ∂/∂x=-4l3, ∂/∂y=-4l3, ∂/∂z=4(l0-l3)
-        -4.0*l3, -4.0*l3, 4.0*(l0-l3),
+        -4.0 * l3,
+        -4.0 * l3,
+        4.0 * (l0 - l3),
         // dof 8: φ=4l1l3 → ∂/∂x=4l3, ∂/∂y=0, ∂/∂z=4l1
-        4.0*l3, 0.0, 4.0*l1,
+        4.0 * l3,
+        0.0,
+        4.0 * l1,
         // dof 9: φ=4l2l3 → ∂/∂x=0, ∂/∂y=4l3, ∂/∂z=4l2
-        0.0, 4.0*l3, 4.0*l2,
+        0.0,
+        4.0 * l3,
+        4.0 * l2,
     ];
     (phi, dphi)
+}
+
+/// P3 tet nodal Lagrange basis (20 lattice nodes).
+fn tet_p3_basis(x: f64, y: f64, z: f64) -> (Vec<f64>, Vec<f64>) {
+    let (m, mx, my, mz) = tet_p3_mono_val_grad(x, y, z);
+    let mut phi = vec![0.0_f64; 20];
+    let mut dphi = vec![0.0_f64; 60];
+    for k in 0..20 {
+        let mut pk = 0.0_f64;
+        let mut gx = 0.0_f64;
+        let mut gy = 0.0_f64;
+        let mut gz = 0.0_f64;
+        for j in 0..20 {
+            let c = TET_P3_COEFF[j][k];
+            pk += c * m[j];
+            gx += c * mx[j];
+            gy += c * my[j];
+            gz += c * mz[j];
+        }
+        phi[k] = pk;
+        dphi[k * 3] = gx;
+        dphi[k * 3 + 1] = gy;
+        dphi[k * 3 + 2] = gz;
+    }
+    (phi, dphi)
+}
+
+fn tet_p3_mono_val_grad(x: f64, y: f64, z: f64) -> ([f64; 20], [f64; 20], [f64; 20], [f64; 20]) {
+    let mut m = [0.0_f64; 20];
+    let mut mx = [0.0_f64; 20];
+    let mut my = [0.0_f64; 20];
+    let mut mz = [0.0_f64; 20];
+    for (j, &(i, iy, iz)) in TET_P3_EXP.iter().enumerate() {
+        let i = i as i32;
+        let iy = iy as i32;
+        let iz = iz as i32;
+        let xv = x.powi(i);
+        let yv = y.powi(iy);
+        let zv = z.powi(iz);
+        m[j] = xv * yv * zv;
+        mx[j] = if i > 0 {
+            (i as f64) * x.powi(i - 1) * y.powi(iy) * z.powi(iz)
+        } else {
+            0.0
+        };
+        my[j] = if iy > 0 {
+            (iy as f64) * x.powi(i) * y.powi(iy - 1) * z.powi(iz)
+        } else {
+            0.0
+        };
+        mz[j] = if iz > 0 {
+            (iz as f64) * x.powi(i) * y.powi(iy) * z.powi(iz - 1)
+        } else {
+            0.0
+        };
+    }
+    (m, mx, my, mz)
 }
 
 // ── quadrature rules ─────────────────────────────────────────────────────────
@@ -627,36 +794,22 @@ fn tri_quadrature(q: usize) -> ReedResult<(Vec<f64>, Vec<f64>)> {
     match q {
         1 => {
             // Centroid rule (degree 1 exact)
-            let pts = vec![1.0/3.0, 1.0/3.0];
+            let pts = vec![1.0 / 3.0, 1.0 / 3.0];
             let wts = vec![0.5];
             Ok((pts, wts))
         }
         3 => {
             // Degree 2 exact (Dunavant / midpoint rule)
-            let a = 1.0/6.0;
-            let b = 2.0/3.0;
-            let pts = vec![
-                a, a,
-                b, a,
-                a, b,
-            ];
-            let wts = vec![1.0/6.0, 1.0/6.0, 1.0/6.0];
+            let a = 1.0 / 6.0;
+            let b = 2.0 / 3.0;
+            let pts = vec![a, a, b, a, a, b];
+            let wts = vec![1.0 / 6.0, 1.0 / 6.0, 1.0 / 6.0];
             Ok((pts, wts))
         }
         4 => {
             // Degree 3 exact (Dunavant 4-point, one negative weight)
-            let pts = vec![
-                1.0/3.0, 1.0/3.0,
-                0.2,     0.2,
-                0.6,     0.2,
-                0.2,     0.6,
-            ];
-            let wts = vec![
-                -27.0/96.0,
-                25.0/96.0,
-                25.0/96.0,
-                25.0/96.0,
-            ];
+            let pts = vec![1.0 / 3.0, 1.0 / 3.0, 0.2, 0.2, 0.6, 0.2, 0.2, 0.6];
+            let wts = vec![-27.0 / 96.0, 25.0 / 96.0, 25.0 / 96.0, 25.0 / 96.0];
             Ok((pts, wts))
         }
         6 => {
@@ -669,14 +822,7 @@ fn tri_quadrature(q: usize) -> ReedResult<(Vec<f64>, Vec<f64>)> {
             let a2 = 0.091576213509771_f64;
             let b2 = 0.816847572980459_f64;
             let w2 = 0.054975871827661_f64;
-            let pts = vec![
-                a1, a1,
-                b1, a1,
-                a1, b1,
-                a2, a2,
-                b2, a2,
-                a2, b2,
-            ];
+            let pts = vec![a1, a1, b1, a1, a1, b1, a2, a2, b2, a2, a2, b2];
             let wts = vec![w1, w1, w1, w2, w2, w2];
             Ok((pts, wts))
         }
@@ -697,13 +843,20 @@ fn tri_quadrature(q: usize) -> ReedResult<(Vec<f64>, Vec<f64>)> {
             let b_outer = 1.0 - 2.0 * a_outer;
             let w_outer = (155.0 + sq15) / 2400.0;
             let pts = vec![
-                1.0/3.0, 1.0/3.0,
-                a_outer, a_outer,
-                b_outer, a_outer,
-                a_outer, b_outer,
-                a_inner, a_inner,
-                b_inner, a_inner,
-                a_inner, b_inner,
+                1.0 / 3.0,
+                1.0 / 3.0,
+                a_outer,
+                a_outer,
+                b_outer,
+                a_outer,
+                a_outer,
+                b_outer,
+                a_inner,
+                a_inner,
+                b_inner,
+                a_inner,
+                a_inner,
+                b_inner,
             ];
             let wts = vec![w1, w_outer, w_outer, w_outer, w_inner, w_inner, w_inner];
             Ok((pts, wts))
@@ -727,22 +880,17 @@ fn tet_quadrature(q: usize) -> ReedResult<(Vec<f64>, Vec<f64>)> {
     match q {
         1 => {
             let pts = vec![0.25, 0.25, 0.25];
-            let wts = vec![1.0/6.0];
+            let wts = vec![1.0 / 6.0];
             Ok((pts, wts))
         }
         4 => {
             // Degree 2 exact (symmetric 4-point rule)
             // a = (5 - sqrt(5)) / 20,  b = (5 + 3*sqrt(5)) / 20
             let sq5 = 5.0_f64.sqrt();
-            let a = (5.0 - sq5) / 20.0;  // ≈ 0.1381966
-            let b = (5.0 + 3.0*sq5) / 20.0; // ≈ 0.5854102
-            let w = 1.0/24.0;
-            let pts = vec![
-                a, a, a,
-                b, a, a,
-                a, b, a,
-                a, a, b,
-            ];
+            let a = (5.0 - sq5) / 20.0; // ≈ 0.1381966
+            let b = (5.0 + 3.0 * sq5) / 20.0; // ≈ 0.5854102
+            let w = 1.0 / 24.0;
+            let pts = vec![a, a, a, b, a, a, a, b, a, a, a, b];
             let wts = vec![w, w, w, w];
             Ok((pts, wts))
         }
@@ -750,18 +898,28 @@ fn tet_quadrature(q: usize) -> ReedResult<(Vec<f64>, Vec<f64>)> {
             // Degree 3 exact (Keast 5-point rule with negative weight)
             // Point at centroid with negative weight
             let pts = vec![
-                0.25,         0.25,        0.25,
-                1.0/6.0, 1.0/6.0, 1.0/6.0,
-                0.5,     1.0/6.0, 1.0/6.0,
-                1.0/6.0, 0.5,     1.0/6.0,
-                1.0/6.0, 1.0/6.0, 0.5,
+                0.25,
+                0.25,
+                0.25,
+                1.0 / 6.0,
+                1.0 / 6.0,
+                1.0 / 6.0,
+                0.5,
+                1.0 / 6.0,
+                1.0 / 6.0,
+                1.0 / 6.0,
+                0.5,
+                1.0 / 6.0,
+                1.0 / 6.0,
+                1.0 / 6.0,
+                0.5,
             ];
             let wts = vec![
-                -4.0/30.0,
-                9.0/120.0,
-                9.0/120.0,
-                9.0/120.0,
-                9.0/120.0,
+                -4.0 / 30.0,
+                9.0 / 120.0,
+                9.0 / 120.0,
+                9.0 / 120.0,
+                9.0 / 120.0,
             ];
             Ok((pts, wts))
         }
@@ -774,9 +932,8 @@ fn tet_quadrature(q: usize) -> ReedResult<(Vec<f64>, Vec<f64>)> {
 // ── utilities ─────────────────────────────────────────────────────────────────
 
 fn to_t<T: Scalar>(v: f64) -> ReedResult<T> {
-    T::from(v).ok_or_else(|| {
-        ReedError::Basis(format!("SimplexBasis: failed to convert {v} to scalar"))
-    })
+    T::from(v)
+        .ok_or_else(|| ReedError::Basis(format!("SimplexBasis: failed to convert {v} to scalar")))
 }
 
 fn check_sizes<T>(
@@ -790,7 +947,10 @@ fn check_sizes<T>(
         return Err(ReedError::Basis(format!(
             "SimplexBasis {mode} size mismatch: \
              input {} (expected {}), output {} (expected {})",
-            u.len(), u_expected, v.len(), v_expected
+            u.len(),
+            u_expected,
+            v.len(),
+            v_expected
         )));
     }
     Ok(())
@@ -808,10 +968,13 @@ mod tests {
 
     #[test]
     fn tri_p1_partition_of_unity() {
-        for &(x, y) in &[(0.1, 0.2), (0.5, 0.3), (1.0/3.0, 1.0/3.0)] {
+        for &(x, y) in &[(0.1, 0.2), (0.5, 0.3), (1.0 / 3.0, 1.0 / 3.0)] {
             let (phi, _) = tri_p1_basis(x, y);
             let sum: f64 = phi.iter().sum();
-            assert!((sum - 1.0).abs() < TOL, "PoU failed at ({x},{y}): sum={sum}");
+            assert!(
+                (sum - 1.0).abs() < TOL,
+                "PoU failed at ({x},{y}): sum={sum}"
+            );
         }
     }
 
@@ -820,25 +983,58 @@ mod tests {
         for &(x, y) in &[(0.1, 0.2), (0.5, 0.25), (0.25, 0.5)] {
             let (phi, _) = tri_p2_basis(x, y);
             let sum: f64 = phi.iter().sum();
-            assert!((sum - 1.0).abs() < TOL, "PoU failed at ({x},{y}): sum={sum}");
+            assert!(
+                (sum - 1.0).abs() < TOL,
+                "PoU failed at ({x},{y}): sum={sum}"
+            );
         }
     }
 
     #[test]
     fn tet_p1_partition_of_unity() {
-        for &(x, y, z) in &[(0.1,0.2,0.3),(0.25,0.25,0.25)] {
+        for &(x, y, z) in &[(0.1, 0.2, 0.3), (0.25, 0.25, 0.25)] {
             let (phi, _) = tet_p1_basis(x, y, z);
             let sum: f64 = phi.iter().sum();
-            assert!((sum - 1.0).abs() < TOL, "PoU failed at ({x},{y},{z}): sum={sum}");
+            assert!(
+                (sum - 1.0).abs() < TOL,
+                "PoU failed at ({x},{y},{z}): sum={sum}"
+            );
         }
     }
 
     #[test]
     fn tet_p2_partition_of_unity() {
-        for &(x, y, z) in &[(0.1,0.2,0.1),(0.2,0.2,0.2)] {
+        for &(x, y, z) in &[(0.1, 0.2, 0.1), (0.2, 0.2, 0.2)] {
             let (phi, _) = tet_p2_basis(x, y, z);
             let sum: f64 = phi.iter().sum();
-            assert!((sum - 1.0).abs() < TOL, "PoU failed at ({x},{y},{z}): sum={sum}");
+            assert!(
+                (sum - 1.0).abs() < TOL,
+                "PoU failed at ({x},{y},{z}): sum={sum}"
+            );
+        }
+    }
+
+    #[test]
+    fn tri_p3_partition_of_unity() {
+        for &(x, y) in &[(0.12, 0.21), (0.4, 0.35), (0.25, 0.25)] {
+            let (phi, _) = tri_p3_basis(x, y);
+            let sum: f64 = phi.iter().sum();
+            assert!(
+                (sum - 1.0).abs() < 1e-11,
+                "PoU failed at ({x},{y}): sum={sum}"
+            );
+        }
+    }
+
+    #[test]
+    fn tet_p3_partition_of_unity() {
+        for &(x, y, z) in &[(0.1, 0.15, 0.05), (0.2, 0.15, 0.1)] {
+            let (phi, _) = tet_p3_basis(x, y, z);
+            let sum: f64 = phi.iter().sum();
+            assert!(
+                (sum - 1.0).abs() < 1e-10,
+                "PoU failed at ({x},{y},{z}): sum={sum}"
+            );
         }
     }
 
@@ -846,8 +1042,12 @@ mod tests {
 
     // Centered finite difference — O(h²) error so 1e-8 tolerance is safe with h=1e-5.
     fn fd_check_tri(poly: usize, x: f64, y: f64, h: f64) {
-        let basis_fn: fn(f64, f64) -> (Vec<f64>, Vec<f64>) =
-            if poly == 1 { tri_p1_basis } else { tri_p2_basis };
+        let basis_fn: fn(f64, f64) -> (Vec<f64>, Vec<f64>) = match poly {
+            1 => tri_p1_basis,
+            2 => tri_p2_basis,
+            3 => tri_p3_basis,
+            _ => panic!("fd_check_tri: poly {poly}"),
+        };
         let (_, dphi) = basis_fn(x, y);
         let (phi_px, _) = basis_fn(x + h, y);
         let (phi_mx, _) = basis_fn(x - h, y);
@@ -857,8 +1057,8 @@ mod tests {
         for i in 0..num_dof {
             let fd_x = (phi_px[i] - phi_mx[i]) / (2.0 * h);
             let fd_y = (phi_py[i] - phi_my[i]) / (2.0 * h);
-            let an_x = dphi[i*2];
-            let an_y = dphi[i*2+1];
+            let an_x = dphi[i * 2];
+            let an_y = dphi[i * 2 + 1];
             assert!(
                 (fd_x - an_x).abs() < 1e-8,
                 "tri P{poly} dof {i} ∂/∂x: FD={fd_x:.10}, analytic={an_x:.10}"
@@ -871,9 +1071,50 @@ mod tests {
     }
 
     #[test]
-    fn tri_p1_gradient_fd() { fd_check_tri(1, 0.2, 0.3, 1e-6); }
+    fn tri_p1_gradient_fd() {
+        fd_check_tri(1, 0.2, 0.3, 1e-6);
+    }
     #[test]
-    fn tri_p2_gradient_fd() { fd_check_tri(2, 0.2, 0.3, 1e-6); }
+    fn tri_p2_gradient_fd() {
+        fd_check_tri(2, 0.2, 0.3, 1e-6);
+    }
+    #[test]
+    fn tri_p3_gradient_fd() {
+        fd_check_tri(3, 0.22, 0.31, 1e-6);
+    }
+
+    fn fd_check_tet(poly: usize, x: f64, y: f64, z: f64, h: f64) {
+        let basis_fn: fn(f64, f64, f64) -> (Vec<f64>, Vec<f64>) = match poly {
+            1 => tet_p1_basis,
+            2 => tet_p2_basis,
+            3 => tet_p3_basis,
+            _ => panic!("fd_check_tet: poly {poly}"),
+        };
+        let (_, dphi) = basis_fn(x, y, z);
+        let (phi_px, _) = basis_fn(x + h, y, z);
+        let (phi_mx, _) = basis_fn(x - h, y, z);
+        let (phi_py, _) = basis_fn(x, y + h, z);
+        let (phi_my, _) = basis_fn(x, y - h, z);
+        let (phi_pz, _) = basis_fn(x, y, z + h);
+        let (phi_mz, _) = basis_fn(x, y, z - h);
+        let num_dof = dphi.len() / 3;
+        for i in 0..num_dof {
+            let fd_x = (phi_px[i] - phi_mx[i]) / (2.0 * h);
+            let fd_y = (phi_py[i] - phi_my[i]) / (2.0 * h);
+            let fd_z = (phi_pz[i] - phi_mz[i]) / (2.0 * h);
+            let an_x = dphi[i * 3];
+            let an_y = dphi[i * 3 + 1];
+            let an_z = dphi[i * 3 + 2];
+            assert!((fd_x - an_x).abs() < 1e-7, "tet P{poly} dof {i} ∂x");
+            assert!((fd_y - an_y).abs() < 1e-7, "tet P{poly} dof {i} ∂y");
+            assert!((fd_z - an_z).abs() < 1e-7, "tet P{poly} dof {i} ∂z");
+        }
+    }
+
+    #[test]
+    fn tet_p3_gradient_fd() {
+        fd_check_tet(3, 0.15, 0.12, 0.08, 1e-6);
+    }
 
     // ── quadrature weight sums ────────────────────────────────────────────
 
@@ -895,7 +1136,7 @@ mod tests {
             let (_, wts) = tet_quadrature(q).unwrap();
             let sum: f64 = wts.iter().sum();
             assert!(
-                (sum - 1.0/6.0).abs() < 1e-13,
+                (sum - 1.0 / 6.0).abs() < 1e-13,
                 "tet q={q}: weights sum to {sum}, expected 1/6"
             );
         }
@@ -913,8 +1154,11 @@ mod tests {
         basis.apply(1, false, EvalMode::Interp, &u, &mut v).unwrap();
         let (q_ref, _) = tri_quadrature(3).unwrap();
         for (qi, vv) in v.iter().enumerate() {
-            let expected = q_ref[qi*2]; // x-coordinate of qpt
-            assert!((*vv - expected).abs() < TOL, "qpt {qi}: got {vv}, expected {expected}");
+            let expected = q_ref[qi * 2]; // x-coordinate of qpt
+            assert!(
+                (*vv - expected).abs() < TOL,
+                "qpt {qi}: got {vv}, expected {expected}"
+            );
         }
     }
 
@@ -927,8 +1171,11 @@ mod tests {
         basis.apply(1, false, EvalMode::Interp, &u, &mut v).unwrap();
         let (q_ref, _) = tet_quadrature(4).unwrap();
         for (qi, vv) in v.iter().enumerate() {
-            let expected = q_ref[qi*3 + 1]; // y-coordinate of qpt
-            assert!((*vv - expected).abs() < TOL, "qpt {qi}: got {vv}, expected {expected}");
+            let expected = q_ref[qi * 3 + 1]; // y-coordinate of qpt
+            assert!(
+                (*vv - expected).abs() < TOL,
+                "qpt {qi}: got {vv}, expected {expected}"
+            );
         }
     }
 
@@ -938,18 +1185,28 @@ mod tests {
     fn tri_p1_weight_sums_to_area() {
         let basis = SimplexBasis::<f64>::new(ElemTopology::Triangle, 1, 1, 3).unwrap();
         let mut v = vec![0.0_f64; basis.num_qpoints()];
-        basis.apply(1, false, EvalMode::Weight, &[], &mut v).unwrap();
+        basis
+            .apply(1, false, EvalMode::Weight, &[], &mut v)
+            .unwrap();
         let sum: f64 = v.iter().sum();
-        assert!((sum - 0.5).abs() < TOL, "weight sum={sum}, expected 0.5 (triangle area)");
+        assert!(
+            (sum - 0.5).abs() < TOL,
+            "weight sum={sum}, expected 0.5 (triangle area)"
+        );
     }
 
     #[test]
     fn tet_p1_weight_sums_to_volume() {
         let basis = SimplexBasis::<f64>::new(ElemTopology::Tet, 1, 1, 4).unwrap();
         let mut v = vec![0.0_f64; basis.num_qpoints()];
-        basis.apply(1, false, EvalMode::Weight, &[], &mut v).unwrap();
+        basis
+            .apply(1, false, EvalMode::Weight, &[], &mut v)
+            .unwrap();
         let sum: f64 = v.iter().sum();
-        assert!((sum - 1.0/6.0).abs() < TOL, "weight sum={sum}, expected 1/6 (tet volume)");
+        assert!(
+            (sum - 1.0 / 6.0).abs() < TOL,
+            "weight sum={sum}, expected 1/6 (tet volume)"
+        );
     }
 
     #[test]
