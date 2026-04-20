@@ -5,8 +5,9 @@ mod poisson;
 mod vec_dot;
 
 pub use ceed_gallery::{
-    Identity, IdentityScalar, Scale, ScaleScalar, Vector3MassApply, Vector3Poisson1DApply,
-    Vector3Poisson2DApply, Vector3Poisson3DApply,
+    Identity, IdentityScalar, Scale, ScaleScalar, Vector2MassApply, Vector2Poisson1DApply,
+    Vector2Poisson2DApply, Vector3MassApply, Vector3Poisson1DApply, Vector3Poisson2DApply,
+    Vector3Poisson3DApply,
 };
 pub use mass::{Mass1DBuild, Mass2DBuild, Mass3DBuild, MassApply};
 pub use poisson::{

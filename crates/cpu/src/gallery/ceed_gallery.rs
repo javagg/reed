@@ -255,6 +255,223 @@ impl<T: Scalar> QFunctionTrait<T> for ScaleScalar {
     }
 }
 
+// --- Vector2 mass / Poisson (Reed extension; 2D vector fields) ------------
+
+/// `"Vector2MassApply"` — `v[k] = qdata * u[k]` with two vector components per quadrature point.
+#[derive(Clone, Default)]
+pub struct Vector2MassApply {
+    inputs: Vec<QFunctionField>,
+    outputs: Vec<QFunctionField>,
+}
+
+impl Vector2MassApply {
+    pub fn new() -> Self {
+        Self {
+            inputs: vec![
+                QFunctionField {
+                    name: "u".into(),
+                    num_comp: 2,
+                    eval_mode: EvalMode::Interp,
+                },
+                QFunctionField {
+                    name: "qdata".into(),
+                    num_comp: 1,
+                    eval_mode: EvalMode::None,
+                },
+            ],
+            outputs: vec![QFunctionField {
+                name: "v".into(),
+                num_comp: 2,
+                eval_mode: EvalMode::Interp,
+            }],
+        }
+    }
+}
+
+impl<T: Scalar> QFunctionTrait<T> for Vector2MassApply {
+    fn inputs(&self) -> &[QFunctionField] {
+        &self.inputs
+    }
+
+    fn outputs(&self) -> &[QFunctionField] {
+        &self.outputs
+    }
+
+    fn apply(
+        &self,
+        _ctx: &[u8],
+        q: usize,
+        inputs: &[&[T]],
+        outputs: &mut [&mut [T]],
+    ) -> ReedResult<()> {
+        if inputs.len() != 2 || outputs.len() != 1 {
+            return Err(ReedError::QFunction(
+                "Vector2MassApply expects 2 inputs and 1 output".into(),
+            ));
+        }
+        let u = inputs[0];
+        let qdata = inputs[1];
+        let v = &mut outputs[0];
+        if qdata.len() != q || u.len() != q * 2 || v.len() != q * 2 {
+            return Err(ReedError::QFunction(
+                "Vector2MassApply: buffer length mismatch".into(),
+            ));
+        }
+        for i in 0..q {
+            let s = qdata[i];
+            v[i * 2] = s * u[i * 2];
+            v[i * 2 + 1] = s * u[i * 2 + 1];
+        }
+        Ok(())
+    }
+}
+
+/// `"Vector2Poisson1DApply"` — two independent scalar 1D Poisson gradient applies (same `qdata` as `Poisson1DApply`).
+#[derive(Clone, Default)]
+pub struct Vector2Poisson1DApply {
+    inputs: Vec<QFunctionField>,
+    outputs: Vec<QFunctionField>,
+}
+
+impl Vector2Poisson1DApply {
+    pub fn new() -> Self {
+        Self {
+            inputs: vec![
+                QFunctionField {
+                    name: "du".into(),
+                    num_comp: 2,
+                    eval_mode: EvalMode::Grad,
+                },
+                QFunctionField {
+                    name: "qdata".into(),
+                    num_comp: 1,
+                    eval_mode: EvalMode::None,
+                },
+            ],
+            outputs: vec![QFunctionField {
+                name: "dv".into(),
+                num_comp: 2,
+                eval_mode: EvalMode::Grad,
+            }],
+        }
+    }
+}
+
+impl<T: Scalar> QFunctionTrait<T> for Vector2Poisson1DApply {
+    fn inputs(&self) -> &[QFunctionField] {
+        &self.inputs
+    }
+
+    fn outputs(&self) -> &[QFunctionField] {
+        &self.outputs
+    }
+
+    fn apply(
+        &self,
+        _ctx: &[u8],
+        q: usize,
+        inputs: &[&[T]],
+        outputs: &mut [&mut [T]],
+    ) -> ReedResult<()> {
+        if inputs.len() != 2 || outputs.len() != 1 {
+            return Err(ReedError::QFunction(
+                "Vector2Poisson1DApply expects 2 inputs and 1 output".into(),
+            ));
+        }
+        let du = inputs[0];
+        let qdata = inputs[1];
+        let dv = &mut outputs[0];
+        if qdata.len() != q || du.len() != q * 2 || dv.len() != q * 2 {
+            return Err(ReedError::QFunction(
+                "Vector2Poisson1DApply: buffer length mismatch".into(),
+            ));
+        }
+        for i in 0..q {
+            let g = qdata[i];
+            dv[i * 2] = g * du[i * 2];
+            dv[i * 2 + 1] = g * du[i * 2 + 1];
+        }
+        Ok(())
+    }
+}
+
+/// `"Vector2Poisson2DApply"` — two stacked 2D Poisson gradient applies (`qdata` layout matches `Poisson2DApply`).
+#[derive(Clone, Default)]
+pub struct Vector2Poisson2DApply {
+    inputs: Vec<QFunctionField>,
+    outputs: Vec<QFunctionField>,
+}
+
+impl Vector2Poisson2DApply {
+    pub fn new() -> Self {
+        Self {
+            inputs: vec![
+                QFunctionField {
+                    name: "du".into(),
+                    num_comp: 4,
+                    eval_mode: EvalMode::Grad,
+                },
+                QFunctionField {
+                    name: "qdata".into(),
+                    num_comp: 4,
+                    eval_mode: EvalMode::None,
+                },
+            ],
+            outputs: vec![QFunctionField {
+                name: "dv".into(),
+                num_comp: 4,
+                eval_mode: EvalMode::Grad,
+            }],
+        }
+    }
+}
+
+impl<T: Scalar> QFunctionTrait<T> for Vector2Poisson2DApply {
+    fn inputs(&self) -> &[QFunctionField] {
+        &self.inputs
+    }
+
+    fn outputs(&self) -> &[QFunctionField] {
+        &self.outputs
+    }
+
+    fn apply(
+        &self,
+        _ctx: &[u8],
+        q: usize,
+        inputs: &[&[T]],
+        outputs: &mut [&mut [T]],
+    ) -> ReedResult<()> {
+        if inputs.len() != 2 || outputs.len() != 1 {
+            return Err(ReedError::QFunction(
+                "Vector2Poisson2DApply expects 2 inputs and 1 output".into(),
+            ));
+        }
+        let du = inputs[0];
+        let qdata = inputs[1];
+        let dv = &mut outputs[0];
+        if qdata.len() != q * 4 || du.len() != q * 4 || dv.len() != q * 4 {
+            return Err(ReedError::QFunction(
+                "Vector2Poisson2DApply: buffer length mismatch".into(),
+            ));
+        }
+        for i in 0..q {
+            for c in 0..2 {
+                let base = c * 2;
+                let du0 = du[i * 4 + base];
+                let du1 = du[i * 4 + base + 1];
+                let g00 = qdata[i * 4];
+                let g01 = qdata[i * 4 + 1];
+                let g10 = qdata[i * 4 + 2];
+                let g11 = qdata[i * 4 + 3];
+                dv[i * 4 + base] = g00 * du0 + g01 * du1;
+                dv[i * 4 + base + 1] = g10 * du0 + g11 * du1;
+            }
+        }
+        Ok(())
+    }
+}
+
 // --- Vector3 mass / Poisson -----------------------------------------------
 
 /// `"Vector3MassApply"` — `v[k] = qdata * u[k]` with three vector components at each quadrature point.
@@ -594,6 +811,30 @@ mod tests {
         let mut v = vec![0.0; 2];
         sc.apply(&ctx, 2, &[u.as_slice()], &mut [&mut v]).unwrap();
         assert_eq!(v, vec![2.5, 5.0]);
+    }
+
+    #[test]
+    fn vector2_mass_apply() {
+        let m = Vector2MassApply::new();
+        let u = vec![1.0, 2.0, 1.0, 1.0];
+        let qdata = vec![2.0, 3.0];
+        let mut v = vec![0.0; 4];
+        m.apply(&[], 2, &[&u, &qdata], &mut [&mut v]).unwrap();
+        assert_eq!(v, vec![2.0, 4.0, 3.0, 3.0]);
+    }
+
+    #[test]
+    fn vector2_poisson2d_apply() {
+        let m = Vector2Poisson2DApply::new();
+        // q=1: identity qdata I, du = [1,0, 0,1] -> dv same
+        let du = vec![1.0_f64, 0.0, 0.0, 1.0];
+        let qdata = vec![1.0, 0.0, 0.0, 1.0];
+        let mut dv = vec![0.0_f64; 4];
+        m.apply(&[], 1, &[&du, &qdata], &mut [&mut dv]).unwrap();
+        assert!((dv[0] - 1.0).abs() < 1e-14);
+        assert!((dv[1]).abs() < 1e-14);
+        assert!((dv[2]).abs() < 1e-14);
+        assert!((dv[3] - 1.0).abs() < 1e-14);
     }
 
     #[test]

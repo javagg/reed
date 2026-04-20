@@ -33,8 +33,8 @@ pub use composite_operator::CompositeOperator;
 pub use gallery::{
     Identity, IdentityScalar, Mass1DBuild, Mass2DBuild, Mass3DBuild, MassApply, Poisson1DApply,
     Poisson1DBuild, Poisson2DApply, Poisson2DBuild, Poisson3DApply, Poisson3DBuild, Scale,
-    ScaleScalar, Vec2Dot, Vec3Dot, Vector3MassApply, Vector3Poisson1DApply, Vector3Poisson2DApply,
-    Vector3Poisson3DApply,
+    ScaleScalar, Vec2Dot, Vec3Dot, Vector2MassApply, Vector2Poisson1DApply, Vector2Poisson2DApply,
+    Vector3MassApply, Vector3Poisson1DApply, Vector3Poisson2DApply, Vector3Poisson3DApply,
 };
 pub use operator::{CpuOperator, FieldVector, OperatorBuilder};
 
@@ -132,6 +132,9 @@ pub fn q_function_by_name<T: Scalar>(name: &str) -> ReedResult<Box<dyn QFunction
         "Identity to scalar" => Ok(Box::new(IdentityScalar::default())),
         "Scale" => Ok(Box::new(Scale::default())),
         "Scale (scalar)" => Ok(Box::new(ScaleScalar::default())),
+        "Vector2MassApply" => Ok(Box::new(Vector2MassApply::new())),
+        "Vector2Poisson1DApply" => Ok(Box::new(Vector2Poisson1DApply::new())),
+        "Vector2Poisson2DApply" => Ok(Box::new(Vector2Poisson2DApply::new())),
         "Vector3MassApply" => Ok(Box::new(Vector3MassApply::new())),
         "Vector3Poisson1DApply" => Ok(Box::new(Vector3Poisson1DApply::new())),
         "Vector3Poisson2DApply" => Ok(Box::new(Vector3Poisson2DApply::new())),
