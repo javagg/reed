@@ -64,6 +64,62 @@ impl QFunctionContext {
         self.data[offset..offset + 8].copy_from_slice(&v.to_le_bytes());
         Ok(())
     }
+
+    /// Read `f32` at `offset` (little-endian).
+    pub fn read_f32_le(&self, offset: usize) -> ReedResult<f32> {
+        if offset + 4 > self.data.len() {
+            return Err(ReedError::QFunction(format!(
+                "read_f32_le: offset {} + 4 exceeds context length {}",
+                offset,
+                self.data.len()
+            )));
+        }
+        let b: [u8; 4] = self.data[offset..offset + 4]
+            .try_into()
+            .map_err(|_| ReedError::QFunction("read_f32_le: slice length".into()))?;
+        Ok(f32::from_le_bytes(b))
+    }
+
+    /// Write `f32` at `offset` (little-endian).
+    pub fn write_f32_le(&mut self, offset: usize, v: f32) -> ReedResult<()> {
+        if offset + 4 > self.data.len() {
+            return Err(ReedError::QFunction(format!(
+                "write_f32_le: offset {} + 4 exceeds context length {}",
+                offset,
+                self.data.len()
+            )));
+        }
+        self.data[offset..offset + 4].copy_from_slice(&v.to_le_bytes());
+        Ok(())
+    }
+
+    /// Read `i32` at `offset` (little-endian).
+    pub fn read_i32_le(&self, offset: usize) -> ReedResult<i32> {
+        if offset + 4 > self.data.len() {
+            return Err(ReedError::QFunction(format!(
+                "read_i32_le: offset {} + 4 exceeds context length {}",
+                offset,
+                self.data.len()
+            )));
+        }
+        let b: [u8; 4] = self.data[offset..offset + 4]
+            .try_into()
+            .map_err(|_| ReedError::QFunction("read_i32_le: slice length".into()))?;
+        Ok(i32::from_le_bytes(b))
+    }
+
+    /// Write `i32` at `offset` (little-endian).
+    pub fn write_i32_le(&mut self, offset: usize, v: i32) -> ReedResult<()> {
+        if offset + 4 > self.data.len() {
+            return Err(ReedError::QFunction(format!(
+                "write_i32_le: offset {} + 4 exceeds context length {}",
+                offset,
+                self.data.len()
+            )));
+        }
+        self.data[offset..offset + 4].copy_from_slice(&v.to_le_bytes());
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -77,5 +133,16 @@ mod tests {
         c.write_f64_le(8, -1.0).unwrap();
         assert!((c.read_f64_le(0).unwrap() - 3.25).abs() < 1e-15);
         assert!((c.read_f64_le(8).unwrap() + 1.0).abs() < 1e-15);
+    }
+
+    #[test]
+    fn f32_i32_roundtrip() {
+        let mut c = QFunctionContext::new(12);
+        c.write_f32_le(0, 1.25).unwrap();
+        c.write_i32_le(4, -7).unwrap();
+        c.write_i32_le(8, 0x1234_5678_u32 as i32).unwrap();
+        assert!((c.read_f32_le(0).unwrap() - 1.25).abs() < 1e-6);
+        assert_eq!(c.read_i32_le(4).unwrap(), -7);
+        assert_eq!(c.read_i32_le(8).unwrap(), 0x1234_5678_u32 as i32);
     }
 }

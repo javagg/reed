@@ -94,20 +94,6 @@ fn build_coords_components(dim: usize, ndofs_1d: usize) -> Vec<Vec<f64>> {
     comps
 }
 
-fn build_poisson_qdata_1d(node_coords: &[f64], qweights: &[f64], nelem: usize, p: usize) -> Vec<f64> {
-    let q = qweights.len();
-    let mut qdata = Vec::with_capacity(nelem * q);
-    for e in 0..nelem {
-        let i0 = e * (p - 1);
-        let i1 = i0 + (p - 1);
-        let jacobian = 0.5 * (node_coords[i1] - node_coords[i0]);
-        for &w in qweights {
-            qdata.push(w / jacobian);
-        }
-    }
-    qdata
-}
-
 fn run_combined(dim: usize, nelem_1d: usize, p: usize, q: usize) -> Result<(), Box<dyn std::error::Error>> {
     let reed = Reed::<f64>::init("/cpu/self")?;
 
@@ -161,8 +147,6 @@ fn run_combined(dim: usize, nelem_1d: usize, p: usize, q: usize) -> Result<(), B
     op_build_mass.apply(&*x_coord, &mut *qdata_mass)?;
 
     let (r_q_poisson, qdata_poisson) = if dim == 1 {
-        let qdata_vals = build_poisson_qdata_1d(&comps[0], b_u.q_weights(), nelem, p);
-        let qdata_vec = reed.vector_from_slice(&qdata_vals)?;
         let r_q = reed.strided_elem_restriction(
             nelem,
             qpts_per_elem,
@@ -170,6 +154,16 @@ fn run_combined(dim: usize, nelem_1d: usize, p: usize, q: usize) -> Result<(), B
             nelem * qpts_per_elem,
             [1, qpts_per_elem as i32, qpts_per_elem as i32],
         )?;
+        let mut qdata_vec = reed.vector(nelem * qpts_per_elem)?;
+        qdata_vec.set_value(0.0)?;
+        let op_build_poisson = reed
+            .operator_builder()
+            .qfunction(reed.q_function_by_name("Poisson1DBuild")?)
+            .field("dx", Some(&*r_x), Some(&*b_x), FieldVector::Active)
+            .field("weights", None, Some(&*b_x), FieldVector::None)
+            .field("qdata", Some(&*r_q), None, FieldVector::Active)
+            .build()?;
+        op_build_poisson.apply(&*x_coord, &mut *qdata_vec)?;
         (r_q, qdata_vec)
     } else {
         let qdata_comp = dim * dim;

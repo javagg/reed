@@ -308,19 +308,6 @@ fn build_coords_components(dim: usize, ndofs_1d: usize) -> Vec<Vec<f64>> {
     comps
 }
 
-fn build_poisson_qdata_1d(node_coords: &[f64], qweights: &[f64], nelem: usize, p: usize) -> Vec<f64> {
-    let mut qdata = Vec::with_capacity(nelem * qweights.len());
-    for e in 0..nelem {
-        let i0 = e * (p - 1);
-        let i1 = i0 + (p - 1);
-        let jacobian = 0.5 * (node_coords[i1] - node_coords[i0]);
-        for &w in qweights {
-            qdata.push(w / jacobian);
-        }
-    }
-    qdata
-}
-
 fn setup_common(
     _reed: &Reed<f64>,
     dim: usize,
@@ -463,10 +450,24 @@ fn run_ex2(
         let b_u = reed
             .basis_tensor_h1_lagrange(1, 1, p, q, QuadMode::Gauss)
             .map_err(|e| e.to_string())?;
-        let qdata_vals =
-            build_poisson_qdata_1d(node_coords, b_u.q_weights(), nelem, p);
-        let qdata = reed
-            .vector_from_slice(&qdata_vals)
+        let x = reed
+            .vector_from_slice(node_coords)
+            .map_err(|e| e.to_string())?;
+        let mut qdata = reed.vector(nelem * q).map_err(|e| e.to_string())?;
+        qdata.set_value(0.0).map_err(|e| e.to_string())?;
+        let op_build = reed
+            .operator_builder()
+            .qfunction(
+                reed.q_function_by_name("Poisson1DBuild")
+                    .map_err(|e| e.to_string())?,
+            )
+            .field("dx", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+            .field("weights", None, Some(&*b_u), FieldVector::None)
+            .field("qdata", Some(&*r_q), None, FieldVector::Active)
+            .build()
+            .map_err(|e| e.to_string())?;
+        op_build
+            .apply(&*x, &mut *qdata)
             .map_err(|e| e.to_string())?;
 
         let u = reed
@@ -648,11 +649,6 @@ fn run_ex3(
         .map_err(|e| e.to_string())?;
 
     let (r_q_poisson, qdata_poisson) = if dim == 1 {
-        let qdata_vals =
-            build_poisson_qdata_1d(&comps[0], b_u.q_weights(), nelem, p);
-        let qdata_vec = reed
-            .vector_from_slice(&qdata_vals)
-            .map_err(|e| e.to_string())?;
         let r_q = reed
             .strided_elem_restriction(
                 nelem,
@@ -661,6 +657,24 @@ fn run_ex3(
                 nelem * qpts_per_elem,
                 [1, qpts_per_elem as i32, qpts_per_elem as i32],
             )
+            .map_err(|e| e.to_string())?;
+        let mut qdata_vec = reed
+            .vector(nelem * qpts_per_elem)
+            .map_err(|e| e.to_string())?;
+        qdata_vec.set_value(0.0).map_err(|e| e.to_string())?;
+        let op_build_poisson = reed
+            .operator_builder()
+            .qfunction(
+                reed.q_function_by_name("Poisson1DBuild")
+                    .map_err(|e| e.to_string())?,
+            )
+            .field("dx", Some(&*r_x), Some(&*b_x), FieldVector::Active)
+            .field("weights", None, Some(&*b_x), FieldVector::None)
+            .field("qdata", Some(&*r_q), None, FieldVector::Active)
+            .build()
+            .map_err(|e| e.to_string())?;
+        op_build_poisson
+            .apply(&*x, &mut *qdata_vec)
             .map_err(|e| e.to_string())?;
         (r_q, qdata_vec)
     } else {
@@ -777,10 +791,24 @@ fn run_poisson(
             .basis_tensor_h1_lagrange(1, 1, p, q, QuadMode::Gauss)
             .map_err(|e| e.to_string())?;
 
-        let qdata_vals =
-            build_poisson_qdata_1d(node_coords, b_u.q_weights(), nelem, p);
-        let qdata = reed
-            .vector_from_slice(&qdata_vals)
+        let x = reed
+            .vector_from_slice(node_coords)
+            .map_err(|e| e.to_string())?;
+        let mut qdata = reed.vector(nelem * q).map_err(|e| e.to_string())?;
+        qdata.set_value(0.0).map_err(|e| e.to_string())?;
+        let op_build = reed
+            .operator_builder()
+            .qfunction(
+                reed.q_function_by_name("Poisson1DBuild")
+                    .map_err(|e| e.to_string())?,
+            )
+            .field("dx", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+            .field("weights", None, Some(&*b_u), FieldVector::None)
+            .field("qdata", Some(&*r_q), None, FieldVector::Active)
+            .build()
+            .map_err(|e| e.to_string())?;
+        op_build
+            .apply(&*x, &mut *qdata)
             .map_err(|e| e.to_string())?;
         let u = reed
             .vector_from_slice(node_coords)

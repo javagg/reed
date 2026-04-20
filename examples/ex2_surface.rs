@@ -96,20 +96,6 @@ fn build_coords_components(dim: usize, ndofs_1d: usize) -> Vec<Vec<f64>> {
     comps
 }
 
-fn build_poisson_qdata_1d(node_coords: &[f64], qweights: &[f64], nelem: usize, p: usize) -> Vec<f64> {
-    let q = qweights.len();
-    let mut qdata = Vec::with_capacity(nelem * q);
-    for e in 0..nelem {
-        let i0 = e * (p - 1);
-        let i1 = i0 + (p - 1);
-        let jacobian = 0.5 * (node_coords[i1] - node_coords[i0]);
-        for &w in qweights {
-            qdata.push(w / jacobian);
-        }
-    }
-    qdata
-}
-
 fn surface_tol(dim: usize, nelem_1d: usize) -> f64 {
     if dim == 1 {
         1.0e-8
@@ -151,8 +137,17 @@ fn run_surface(
         let r_q = reed.strided_elem_restriction(nelem, q, 1, nelem * q, [1, q as i32, q as i32])?;
         let b_u = reed.basis_tensor_h1_lagrange(1, 1, p, q, QuadMode::Gauss)?;
 
-        let qdata_vals = build_poisson_qdata_1d(node_coords, b_u.q_weights(), nelem, p);
-        let qdata = reed.vector_from_slice(&qdata_vals)?;
+        let x = reed.vector_from_slice(node_coords)?;
+        let mut qdata = reed.vector(nelem * q)?;
+        qdata.set_value(0.0)?;
+        let op_build = reed
+            .operator_builder()
+            .qfunction(reed.q_function_by_name("Poisson1DBuild")?)
+            .field("dx", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+            .field("weights", None, Some(&*b_u), FieldVector::None)
+            .field("qdata", Some(&*r_q), None, FieldVector::Active)
+            .build()?;
+        op_build.apply(&*x, &mut *qdata)?;
 
         let u = reed.vector_from_slice(node_coords)?;
         let mut v = reed.vector(ndofs)?;

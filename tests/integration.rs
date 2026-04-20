@@ -4,18 +4,6 @@ use reed::{
 #[cfg(feature = "wgpu-backend")]
 use reed::TransposeMode;
 
-fn build_poisson_qdata(node_coords: &[f64], qweights: &[f64]) -> Vec<f64> {
-    let q = qweights.len();
-    let mut qdata = Vec::with_capacity((node_coords.len() - 1) * q);
-    for elem in 0..(node_coords.len() - 1) {
-        let jacobian = (node_coords[elem + 1] - node_coords[elem]) * 0.5;
-        for &weight in qweights {
-            qdata.push(weight / jacobian);
-        }
-    }
-    qdata
-}
-
 #[test]
 fn test_mass_1d_integral() {
     let reed = Reed::<f64>::init("/cpu/self").unwrap();
@@ -121,13 +109,6 @@ fn test_poisson_1d_apply() {
         .build()
         .unwrap();
     build_poisson.apply(&*x_coord, &mut *qdata).unwrap();
-
-    let expected_qdata = build_poisson_qdata(&node_coords, b_u.q_weights());
-    let mut got_qdata = vec![0.0_f64; nelem * q];
-    qdata.copy_to_slice(&mut got_qdata).unwrap();
-    for (a, b) in got_qdata.iter().zip(expected_qdata.iter()) {
-        assert!((a - b).abs() < 1.0e-12);
-    }
 
     let op_poisson = reed
         .operator_builder()

@@ -104,19 +104,6 @@ fn build_coords_components(dim: usize, ndofs_1d: usize) -> Vec<Vec<f64>> {
     comps
 }
 
-fn build_poisson_qdata_1d(node_coords: &[f64], qweights: &[f64], nelem: usize, p: usize) -> Vec<f64> {
-    let mut qdata = Vec::with_capacity(nelem * qweights.len());
-    for e in 0..nelem {
-        let i0 = e * (p - 1);
-        let i1 = i0 + (p - 1);
-        let jacobian = 0.5 * (node_coords[i1] - node_coords[i0]);
-        for &w in qweights {
-            qdata.push(w / jacobian);
-        }
-    }
-    qdata
-}
-
 fn build_basis_data(len: usize) -> Vec<f64> {
     (0..len)
         .map(|index| ((index % 19) as f64 - 9.0) * 0.125)
@@ -234,8 +221,20 @@ fn build_poisson_apply(dim: usize, nelem_1d: usize, p: usize, q: usize) -> Apply
                 .unwrap(),
         );
         let b_u = leak_box(reed.basis_tensor_h1_lagrange(1, 1, p, q, QuadMode::Gauss).unwrap());
-        let qdata_vals = build_poisson_qdata_1d(node_coords, b_u.q_weights(), nelem, p);
-        let qdata = leak_box(reed.vector_from_slice(&qdata_vals).unwrap());
+        let x_coord = leak_box(reed.vector_from_slice(node_coords).unwrap());
+        let qdata = leak_box(reed.vector(nelem * q).unwrap());
+        qdata.set_value(0.0).unwrap();
+        leak_box(
+            reed.operator_builder()
+                .qfunction(reed.q_function_by_name("Poisson1DBuild").unwrap())
+                .field("dx", Some(&**r_u), Some(&**b_u), FieldVector::Active)
+                .field("weights", None, Some(&**b_u), FieldVector::None)
+                .field("qdata", Some(&**r_q), None, FieldVector::Active)
+                .build()
+                .unwrap(),
+        )
+        .apply(&**x_coord, &mut **qdata)
+        .unwrap();
         let input = leak_box(reed.vector_from_slice(node_coords).unwrap());
         let output = leak_box(reed.vector(ndofs).unwrap());
         output.set_value(0.0).unwrap();
@@ -383,8 +382,6 @@ fn build_combined_apply(dim: usize, nelem_1d: usize, p: usize, q: usize) -> Appl
     op_build_mass.apply(&**x_coord, &mut **qdata_mass).unwrap();
 
     let (r_q_poisson, qdata_poisson) = if dim == 1 {
-        let qdata_vals = build_poisson_qdata_1d(&comps[0], b_u.q_weights(), nelem, p);
-        let qdata_vec = leak_box(reed.vector_from_slice(&qdata_vals).unwrap());
         let r_q = leak_box(
             reed.strided_elem_restriction(
                 nelem,
@@ -395,6 +392,19 @@ fn build_combined_apply(dim: usize, nelem_1d: usize, p: usize, q: usize) -> Appl
             )
             .unwrap(),
         );
+        let qdata_vec = leak_box(reed.vector(nelem * qpts_per_elem).unwrap());
+        qdata_vec.set_value(0.0).unwrap();
+        let op_poisson_build = reed
+            .operator_builder()
+            .qfunction(reed.q_function_by_name("Poisson1DBuild").unwrap())
+            .field("dx", Some(&**r_x), Some(&**b_x), FieldVector::Active)
+            .field("weights", None, Some(&**b_x), FieldVector::None)
+            .field("qdata", Some(&**r_q), None, FieldVector::Active)
+            .build()
+            .unwrap();
+        op_poisson_build
+            .apply(&**x_coord, &mut **qdata_vec)
+            .unwrap();
         (r_q, qdata_vec)
     } else {
         let qdata_comp = dim * dim;
