@@ -136,6 +136,8 @@ Progress update:
 - `WgpuBasis` runs `Interp`, `Grad`, `Div`, and `Curl` on `f32` for tensor H1 Lagrange when `ncomp` matches the differential mode (including transpose for these modes), matching CPU `LagrangeBasis` in integration tests.
 - Non-`f32` types and other objects still use CPU fallbacks where GPU paths are not implemented.
 
+For a prioritized list of next steps toward libCEED feature parity (QFunction device path, strided restriction on GPU, AtPoints notes, etc.), see **`design_mapping.md` §8.1**.
+
 ## Web benchmark UI
 
 The `web` directory contains a Vue 3 + Vite test UI where you can:

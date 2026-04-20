@@ -30,6 +30,7 @@
 | `CeedBasis` | `dyn BasisTrait<T>` | 参考单元基函数与求值 |
 | `CeedQFunction` | `dyn QFunctionTrait<T>` | 积分点点态算符 |
 | `CeedOperator` | `dyn OperatorTrait<T>` / `CpuOperator<'a, T>` | 完整离散算符 |
+| `CeedCompositeOperator` | `CompositeOperator<T>` | 加法型组合；`apply` / `apply_add` / `linear_assemble_diagonal` 为子算子之和 |
 
 ## 3. 数据类型映射
 
@@ -108,6 +109,7 @@ Reed 对应：
   - `E`: global -> local
   - `E^T`: local -> global accumulate
 - Reed 当前直接在 trait 中暴露 `TransposeMode`，对应 libCEED 的 restriction apply 语义。
+- **WGPU**（`f32`）：offset 型已实现 **gather** 与 **transpose scatter**（与 CPU 一致）；**strided** 型仍走 CPU。`elem_restriction_at_points` 与 offset 共用实现，GPU 路径同上。
 
 ### 4.3 Basis
 
@@ -270,6 +272,18 @@ libCEED 内置 gallery 名称见上游 `gallery/ceed-gallery-list.h`（`CeedQFun
 | 更复杂 operator 组合 | 支持 | 当前基础能力已具备，但接口和示例还需扩展 |
 | WGPU 与 CPU 张量 H1 基 | — | `Interp` / `Grad` / `Div` / `Curl`（含转置、交错积分点布局）在 `f32` 上由集成测试与 CPU 对齐；算子内 QFunction 等仍以 CPU 为主 |
 | WGPU 与 CPU 元限制 | — | offset 型 `ElemRestriction` 的 `NoTranspose` / `Transpose` 在 `f32` 上可走 GPU；`Transpose` 为单线程 scatter（与 `atomicCompareExchange` 不可用的后端兼容） |
+
+### 8.1 后续 libCEED 对齐优先级（建议）
+
+面向示例迁移与接口完备性，建议按依赖顺序推进：
+
+1. **QFunction / 算子设备路径**：在保持 gallery 与 `ClosureQFunction` CPU 正确的前提下，为 WGPU 规划 qdata 与 `QFunctionContext` 的设备驻留与回读约定（对齐 libCEED 的 context / field 注册思路）。
+2. **Strided `ElemRestriction` on WGPU**：在 offset 路径稳定后，为 strided gather / transpose 增加 GPU 实现或明确仅 CPU 的迁移注意事项。
+3. **AtPoints 与边界算子**：将 `elem_restriction_at_points`、表面/体积算子组合等写入独立迁移笔记（与 `examples/` 中 ex2 类路径对应）。
+4. **Operator 组合示例**：在现有 `OperatorBuilder` 与 `CompositeOperator` 上增加与 libCEED 示例结构对应的最小范例（多子域、多块相加）。
+5. **整数与索引约定**：评估将「尺寸」与「restriction 偏移」统一为与 libCEED 更接近的整型策略，降低 C 示例机械翻译成本。
+
+以上不改变当前 trait 语义；落地时逐项更新本文件 §4–§8 与 `readme.md`。
 
 ## 9. 后续维护建议
 
