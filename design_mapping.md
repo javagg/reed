@@ -149,7 +149,7 @@ Reed 对应：
 - `Reed::q_function_interior()`（`context_byte_len` + 闭包接收 `ctx: &[u8]`）
 - `QFunctionField`
 - `QFunctionTrait`（`context_byte_len()` + `apply(ctx, ...)`）
-- `QFunctionContext`（定长字节缓冲；小端标量读写：`read_f64_le` / `write_f64_le`、`read_f32_le` / `write_f32_le`、`read_i32_le` / `write_i32_le`，便于对齐 libCEED / C 侧按偏移打包的 context）
+- `QFunctionContext`（定长字节缓冲；实例上 `read_*_le` / `write_*_le`；另有 **`read_*_le_bytes` / `write_*_le_bytes` 作用于任意 `&[u8]` / `&mut [u8]`**，便于在闭包 `ctx: &[u8]` 中直接解析，与 libCEED / C 侧按偏移打包的 context 对齐）
 - `ClosureQFunction`
 - `Reed::q_function_by_name()`
 - `OperatorBuilder::qfunction_context()`（长度须与 `context_byte_len()` 一致）
@@ -166,7 +166,7 @@ Reed 对应：
 说明：
 
 - 与 libCEED 一样，context 为定长字节块；gallery 默认 `context_byte_len() == 0`。
-- 闭包 / 自定义核里收到的 `ctx: &[u8]` 与 `QFunctionContext::as_bytes()` 布局相同；若在 `apply` 内解析，可直接用 `f32::from_le_bytes` / `i32::from_le_bytes` 等与 `QFunctionContext::read_*_le` 一致的约定，或先把切片拷入 `QFunctionContext::from_bytes` 再调用辅助方法。
+- 闭包 / 自定义核里收到的 `ctx: &[u8]` 与 `QFunctionContext::as_bytes()` 布局相同；优先使用 `QFunctionContext::read_f64_le_bytes(ctx, offset)` 等（及对应的 `write_*_le_bytes`），与实例方法共享边界检查与错误信息；亦可自行 `from_le_bytes` 或拷入 `QFunctionContext::from_bytes` 再调用 `read_*_le`。
 
 ### 4.5 Operator
 

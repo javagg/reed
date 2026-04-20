@@ -701,7 +701,7 @@ fn test_qfunction_context_applies_in_closure() {
             }],
             8,
             Box::new(|ctx_b, q, inputs, outputs| {
-                let scale = f64::from_le_bytes(ctx_b[0..8].try_into().unwrap());
+                let scale = QFunctionContext::read_f64_le_bytes(ctx_b, 0)?;
                 for i in 0..q {
                     outputs[0][i] = scale * inputs[0][i];
                 }
@@ -738,10 +738,8 @@ fn test_qfunction_context_f32_i32_roundtrip_in_closure() {
             }],
             8,
             Box::new(|ctx_b, q, inputs, outputs| {
-                let a = f32::from_le_bytes(ctx_b[0..4].try_into().unwrap());
-                let b = i32::from_le_bytes(ctx_b[4..8].try_into().unwrap());
-                assert!((a - 2.5).abs() < 1.0e-6);
-                assert_eq!(b, -100);
+                let a = QFunctionContext::read_f32_le_bytes(ctx_b, 0)?;
+                let b = QFunctionContext::read_i32_le_bytes(ctx_b, 4)?;
                 for i in 0..q {
                     outputs[0][i] = f64::from(inputs[0][i]) * f64::from(a) + f64::from(b);
                 }
