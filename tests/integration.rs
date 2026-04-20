@@ -1,8 +1,7 @@
 use reed::{
     EvalMode, FieldVector, OperatorTrait, QFunctionContext, QFunctionField, QuadMode, Reed,
+    TransposeMode,
 };
-#[cfg(feature = "wgpu-backend")]
-use reed::TransposeMode;
 
 #[test]
 fn test_mass_1d_integral() {
@@ -130,6 +129,45 @@ fn test_poisson_1d_apply() {
     for (actual, reference) in values.iter().zip(expected.iter()) {
         assert!((actual - reference).abs() < 100.0 * f64::EPSILON);
     }
+}
+
+/// `elem_restriction_at_points` delegates to the same CPU implementation as `elem_restriction`
+/// (libCEED `CeedElemRestrictionCreateAtPoints` naming only).
+#[test]
+fn test_cpu_elem_restriction_at_points_matches_elem_restriction() {
+    let reed = Reed::<f64>::init("/cpu/self").unwrap();
+    let nelem = 2usize;
+    let elemsize = 2usize;
+    let lsize = 3usize;
+    let offsets = vec![0i32, 1, 1, 2];
+
+    let r_offset = reed
+        .elem_restriction(nelem, elemsize, 1, 1, lsize, &offsets)
+        .unwrap();
+    let r_at_points = reed
+        .elem_restriction_at_points(nelem, elemsize, 1, 1, lsize, &offsets)
+        .unwrap();
+
+    let global = vec![1.0_f64, 2.0, 3.0];
+    let mut local_a = vec![0.0_f64; nelem * elemsize];
+    let mut local_b = vec![0.0_f64; nelem * elemsize];
+    r_offset
+        .apply(TransposeMode::NoTranspose, &global, &mut local_a)
+        .unwrap();
+    r_at_points
+        .apply(TransposeMode::NoTranspose, &global, &mut local_b)
+        .unwrap();
+    assert_eq!(local_a, local_b);
+
+    let mut out_a = vec![0.0_f64; lsize];
+    let mut out_b = vec![0.0_f64; lsize];
+    r_offset
+        .apply(TransposeMode::Transpose, &local_a, &mut out_a)
+        .unwrap();
+    r_at_points
+        .apply(TransposeMode::Transpose, &local_b, &mut out_b)
+        .unwrap();
+    assert_eq!(out_a, out_b);
 }
 
 #[test]

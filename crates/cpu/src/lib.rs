@@ -1,3 +1,11 @@
+//! Host CPU backend: [`CpuBackend`] implements [`reed_core::reed::Backend`] for any [`Scalar`]
+//! (`f32` / `f64`) on vectors, restrictions, bases, and [`operator::CpuOperator`].
+//!
+//! Gallery QFunctions from [`q_function_by_name`] are implemented for **`f64`** (matching typical
+//! libCEED double-precision examples). For **`f32`** kernels, use
+//! [`ClosureQFunction`](reed_core::qfunction::ClosureQFunction) with `Reed::q_function_interior` on
+//! the `reed` crate (user-defined QFunctions, analogous to libCEED).
+
 pub mod basis_lagrange;
 pub mod basis_simplex;
 pub mod composite_operator;

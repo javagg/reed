@@ -109,6 +109,7 @@ Reed 对应：
   - `E`: global -> local
   - `E^T`: local -> global accumulate
 - Reed 当前直接在 trait 中暴露 `TransposeMode`，对应 libCEED 的 restriction apply 语义。
+- **CPU**：集成测试 `test_cpu_elem_restriction_at_points_matches_elem_restriction` 校验 `elem_restriction_at_points` 与同名参数的 `elem_restriction` 在 `NoTranspose` / `Transpose` 下数值完全一致（实现上前者委托后者，对齐 libCEED 命名）。
 - **WGPU**（`f32`）：offset 型已实现 **gather** 与 **transpose scatter**（与 CPU 一致）；**strided** 型仍走 CPU。`elem_restriction_at_points` 与 offset 共用实现，GPU 路径同上。
 
 ### 4.3 Basis
