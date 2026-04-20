@@ -121,7 +121,9 @@ impl<T: Scalar> BasisTrait<T> for LagrangeBasis<T> {
                     u.par_chunks(in_stride)
                         .zip(v.par_chunks_mut(out_stride))
                         .with_min_len(PAR_MIN_ELEMS_PER_TASK)
-                        .for_each(|(u_elem, v_elem)| self.apply_interp_elem(transpose, u_elem, v_elem));
+                        .for_each(|(u_elem, v_elem)| {
+                            self.apply_interp_elem(transpose, u_elem, v_elem)
+                        });
                 }
                 #[cfg(not(feature = "parallel"))]
                 {
@@ -159,7 +161,9 @@ impl<T: Scalar> BasisTrait<T> for LagrangeBasis<T> {
                     u.par_chunks(in_stride)
                         .zip(v.par_chunks_mut(out_stride))
                         .with_min_len(PAR_MIN_ELEMS_PER_TASK)
-                        .for_each(|(u_elem, v_elem)| self.apply_grad_elem(transpose, u_elem, v_elem));
+                        .for_each(|(u_elem, v_elem)| {
+                            self.apply_grad_elem(transpose, u_elem, v_elem)
+                        });
                 }
                 #[cfg(not(feature = "parallel"))]
                 {
@@ -720,13 +724,19 @@ impl<T: Scalar> LagrangeBasis<T> {
                 accum.fill(T::ZERO);
 
                 for direction in 0..3 {
-                    let bx = if direction == 0 { &self.grad } else { &self.interp };
+                    let bx = if direction == 0 {
+                        &self.grad
+                    } else {
+                        &self.interp
+                    };
                     for pz in 0..self.p {
                         for qy in 0..self.q {
                             for qx in 0..self.q {
                                 let mut sum = T::ZERO;
                                 for qz in 0..self.q {
-                                    let base = ((qz * q2) + (qy * self.q) + qx) * qcomp + comp * 3 + direction;
+                                    let base = ((qz * q2) + (qy * self.q) + qx) * qcomp
+                                        + comp * 3
+                                        + direction;
                                     let bz = if direction == 2 {
                                         self.grad[qz * self.p + pz]
                                     } else {
@@ -777,9 +787,21 @@ impl<T: Scalar> LagrangeBasis<T> {
             } else {
                 let u_comp = &u_elem[comp * ppp..(comp + 1) * ppp];
                 for direction in 0..3 {
-                    let bx = if direction == 0 { &self.grad } else { &self.interp };
-                    let by = if direction == 1 { &self.grad } else { &self.interp };
-                    let bz = if direction == 2 { &self.grad } else { &self.interp };
+                    let bx = if direction == 0 {
+                        &self.grad
+                    } else {
+                        &self.interp
+                    };
+                    let by = if direction == 1 {
+                        &self.grad
+                    } else {
+                        &self.interp
+                    };
+                    let bz = if direction == 2 {
+                        &self.grad
+                    } else {
+                        &self.interp
+                    };
                     for pz in 0..self.p {
                         for py in 0..self.p {
                             let src = pz * p2 + py * self.p;
@@ -896,9 +918,7 @@ fn try_tensor_contract_simd_f32<T: Scalar>(
         return false;
     }
 
-    if !std::arch::is_x86_feature_detected!("avx2")
-        || !std::arch::is_x86_feature_detected!("fma")
-    {
+    if !std::arch::is_x86_feature_detected!("avx2") || !std::arch::is_x86_feature_detected!("fma") {
         return false;
     }
 
@@ -940,9 +960,7 @@ fn try_tensor_contract_simd_f64<T: Scalar>(
         return false;
     }
 
-    if !std::arch::is_x86_feature_detected!("avx2")
-        || !std::arch::is_x86_feature_detected!("fma")
-    {
+    if !std::arch::is_x86_feature_detected!("avx2") || !std::arch::is_x86_feature_detected!("fma") {
         return false;
     }
 
@@ -984,9 +1002,7 @@ fn try_tensor_contract_accumulate_simd_f32<T: Scalar>(
         return false;
     }
 
-    if !std::arch::is_x86_feature_detected!("avx2")
-        || !std::arch::is_x86_feature_detected!("fma")
-    {
+    if !std::arch::is_x86_feature_detected!("avx2") || !std::arch::is_x86_feature_detected!("fma") {
         return false;
     }
 
@@ -1028,9 +1044,7 @@ fn try_tensor_contract_accumulate_simd_f64<T: Scalar>(
         return false;
     }
 
-    if !std::arch::is_x86_feature_detected!("avx2")
-        || !std::arch::is_x86_feature_detected!("fma")
-    {
+    if !std::arch::is_x86_feature_detected!("avx2") || !std::arch::is_x86_feature_detected!("fma") {
         return false;
     }
 
@@ -1068,9 +1082,9 @@ unsafe fn tensor_contract_f32_avx2(
     transpose: bool,
 ) {
     use std::arch::x86_64::{
-        __m256, _mm_add_ps, _mm_cvtss_f32, _mm256_broadcast_ss, _mm256_castps256_ps128,
-        _mm256_extractf128_ps, _mm256_fmadd_ps, _mm256_loadu_ps, _mm256_setzero_ps,
-        _mm256_storeu_ps, _mm_movehl_ps, _mm_shuffle_ps,
+        __m256, _mm256_broadcast_ss, _mm256_castps256_ps128, _mm256_extractf128_ps,
+        _mm256_fmadd_ps, _mm256_loadu_ps, _mm256_setzero_ps, _mm256_storeu_ps, _mm_add_ps,
+        _mm_cvtss_f32, _mm_movehl_ps, _mm_shuffle_ps,
     };
 
     #[inline]
@@ -1136,9 +1150,9 @@ unsafe fn tensor_contract_f32_avx2_accumulate(
     transpose: bool,
 ) {
     use std::arch::x86_64::{
-        __m256, _mm_add_ps, _mm_cvtss_f32, _mm256_add_ps, _mm256_broadcast_ss,
-        _mm256_castps256_ps128, _mm256_extractf128_ps, _mm256_fmadd_ps, _mm256_loadu_ps,
-        _mm256_setzero_ps, _mm256_storeu_ps, _mm_movehl_ps, _mm_shuffle_ps,
+        __m256, _mm256_add_ps, _mm256_broadcast_ss, _mm256_castps256_ps128, _mm256_extractf128_ps,
+        _mm256_fmadd_ps, _mm256_loadu_ps, _mm256_setzero_ps, _mm256_storeu_ps, _mm_add_ps,
+        _mm_cvtss_f32, _mm_movehl_ps, _mm_shuffle_ps,
     };
 
     #[inline]
@@ -1205,9 +1219,9 @@ unsafe fn tensor_contract_f64_avx2(
     transpose: bool,
 ) {
     use std::arch::x86_64::{
-        __m128d, __m256d, _mm_add_pd, _mm_cvtsd_f64, _mm_unpackhi_pd,
-        _mm256_castpd256_pd128, _mm256_extractf128_pd, _mm256_fmadd_pd, _mm256_loadu_pd,
-        _mm256_setzero_pd, _mm256_storeu_pd, _mm256_broadcast_sd,
+        __m128d, __m256d, _mm256_broadcast_sd, _mm256_castpd256_pd128, _mm256_extractf128_pd,
+        _mm256_fmadd_pd, _mm256_loadu_pd, _mm256_setzero_pd, _mm256_storeu_pd, _mm_add_pd,
+        _mm_cvtsd_f64, _mm_unpackhi_pd,
     };
 
     #[inline]
@@ -1271,9 +1285,9 @@ unsafe fn tensor_contract_f64_avx2_accumulate(
     transpose: bool,
 ) {
     use std::arch::x86_64::{
-        __m128d, __m256d, _mm_add_pd, _mm_cvtsd_f64, _mm_unpackhi_pd, _mm256_add_pd,
-        _mm256_castpd256_pd128, _mm256_extractf128_pd, _mm256_fmadd_pd, _mm256_loadu_pd,
-        _mm256_setzero_pd, _mm256_storeu_pd, _mm256_broadcast_sd,
+        __m128d, __m256d, _mm256_add_pd, _mm256_broadcast_sd, _mm256_castpd256_pd128,
+        _mm256_extractf128_pd, _mm256_fmadd_pd, _mm256_loadu_pd, _mm256_setzero_pd,
+        _mm256_storeu_pd, _mm_add_pd, _mm_cvtsd_f64, _mm_unpackhi_pd,
     };
 
     #[inline]
@@ -1674,7 +1688,9 @@ mod tests {
             }
         }
         let mut grad = vec![0.0; 4 * 2];
-        basis.apply(1, false, EvalMode::Grad, &u, &mut grad).unwrap();
+        basis
+            .apply(1, false, EvalMode::Grad, &u, &mut grad)
+            .unwrap();
         for qpt in 0..4 {
             assert!((grad[qpt * 2] - 2.0).abs() < 1.0e-12);
             assert!((grad[qpt * 2 + 1] + 3.0).abs() < 1.0e-12);
@@ -1702,7 +1718,9 @@ mod tests {
             }
         }
         let mut grad = vec![0.0; 8 * 3];
-        basis.apply(1, false, EvalMode::Grad, &u, &mut grad).unwrap();
+        basis
+            .apply(1, false, EvalMode::Grad, &u, &mut grad)
+            .unwrap();
         for qpt in 0..8 {
             assert!((grad[qpt * 3] - 2.0).abs() < 1.0e-12);
             assert!((grad[qpt * 3 + 1] + 3.0).abs() < 1.0e-12);
@@ -1713,9 +1731,7 @@ mod tests {
     #[test]
     fn test_3d_interp_transpose_matches_naive() {
         let basis = LagrangeBasis::<f64>::new(3, 1, 2, 2, reed_core::QuadMode::Gauss).unwrap();
-        let u = vec![
-            0.5, -1.0, 2.0, 0.25, 1.5, -0.75, 0.1, 3.0,
-        ];
+        let u = vec![0.5, -1.0, 2.0, 0.25, 1.5, -0.75, 0.1, 3.0];
         let mut v = vec![0.0; 8];
         basis.apply(1, true, EvalMode::Interp, &u, &mut v).unwrap();
 
@@ -1749,14 +1765,8 @@ mod tests {
     fn test_3d_grad_transpose_matches_naive() {
         let basis = LagrangeBasis::<f64>::new(3, 1, 2, 2, reed_core::QuadMode::Gauss).unwrap();
         let u = vec![
-            0.5, -1.0, 2.0,
-            0.25, 1.5, -0.75,
-            0.1, 3.0, -2.0,
-            1.25, -0.5, 0.75,
-            -1.0, 0.2, 1.8,
-            2.2, -1.3, 0.4,
-            0.6, 0.7, -0.8,
-            -0.9, 1.1, 2.4,
+            0.5, -1.0, 2.0, 0.25, 1.5, -0.75, 0.1, 3.0, -2.0, 1.25, -0.5, 0.75, -1.0, 0.2, 1.8,
+            2.2, -1.3, 0.4, 0.6, 0.7, -0.8, -0.9, 1.1, 2.4,
         ];
         let mut v = vec![0.0; 8];
         basis.apply(1, true, EvalMode::Grad, &u, &mut v).unwrap();
@@ -1874,11 +1884,12 @@ mod tests {
     #[test]
     fn test_tensor_contract_strided_matches_dense_reference() {
         let basis: [f64; 12] = [
-            1.0_f64, 2.0_f64, 3.0_f64, 4.0_f64,
-            5.0_f64, 6.0_f64, 7.0_f64, 8.0_f64,
-            9.0_f64, 10.0_f64, 11.0_f64, 12.0_f64,
+            1.0_f64, 2.0_f64, 3.0_f64, 4.0_f64, 5.0_f64, 6.0_f64, 7.0_f64, 8.0_f64, 9.0_f64,
+            10.0_f64, 11.0_f64, 12.0_f64,
         ];
-        let u: [f64; 8] = [2.0_f64, -99.0_f64, -1.0_f64, -99.0_f64, 0.5_f64, -99.0_f64, 3.0_f64, -99.0_f64];
+        let u: [f64; 8] = [
+            2.0_f64, -99.0_f64, -1.0_f64, -99.0_f64, 0.5_f64, -99.0_f64, 3.0_f64, -99.0_f64,
+        ];
         let mut v: [f64; 6] = [0.0_f64; 6];
 
         tensor_contract_strided(&basis, &u, 2, &mut v, 2, 3, 4, false);

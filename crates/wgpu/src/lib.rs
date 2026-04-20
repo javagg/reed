@@ -5,8 +5,10 @@ mod vector;
 
 use crate::runtime::GpuRuntime;
 use reed_core::{
-    BasisTrait, ElemRestrictionTrait, VectorTrait, enums::*, error::{ReedError, ReedResult},
+    enums::*,
+    error::{ReedError, ReedResult},
     scalar::Scalar,
+    BasisTrait, ElemRestrictionTrait, VectorTrait,
 };
 use std::sync::Arc;
 
@@ -139,7 +141,11 @@ impl<T: Scalar> WgpuBackend<T> {
         let (gpu_available, adapter_name, runtime) = if let Some(adapter) = adapter {
             let info = adapter.get_info();
             let rt = GpuRuntime::new(&adapter).map(GpuRuntime::shared);
-            (rt.is_some(), Some(format!("{} ({:?})", info.name, info.backend)), rt)
+            (
+                rt.is_some(),
+                Some(format!("{} ({:?})", info.name, info.backend)),
+                rt,
+            )
         } else {
             (false, None, None)
         };
@@ -156,13 +162,10 @@ impl<T: Scalar> WgpuBackend<T> {
     /// Async init for WASM (no pollster — await the WebGPU futures).
     pub async fn new_async() -> Self {
         let instance = wgpu::Instance::default();
-        let runtime = GpuRuntime::new_async(
-            &instance,
-            wgpu::PowerPreference::HighPerformance,
-            false,
-        )
-        .await
-        .map(Arc::new);
+        let runtime =
+            GpuRuntime::new_async(&instance, wgpu::PowerPreference::HighPerformance, false)
+                .await
+                .map(Arc::new);
         let (gpu_available, adapter_name) = if runtime.is_some() {
             (true, Some("WebGPU (WGSL compute)".to_string()))
         } else {
@@ -205,7 +208,10 @@ impl<T: Scalar> reed_core::Backend<T> for WgpuBackend<T> {
         <Self as Backend<T>>::resource_name(self)
     }
 
-    fn create_vector(&self, size: usize) -> reed_core::ReedResult<Box<dyn reed_core::VectorTrait<T>>> {
+    fn create_vector(
+        &self,
+        size: usize,
+    ) -> reed_core::ReedResult<Box<dyn reed_core::VectorTrait<T>>> {
         Backend::<T>::create_vector(self, size)
     }
 
@@ -218,7 +224,9 @@ impl<T: Scalar> reed_core::Backend<T> for WgpuBackend<T> {
         lsize: usize,
         offsets: &[i32],
     ) -> reed_core::ReedResult<Box<dyn reed_core::ElemRestrictionTrait<T>>> {
-        Backend::<T>::create_elem_restriction(self, nelem, elemsize, ncomp, compstride, lsize, offsets)
+        Backend::<T>::create_elem_restriction(
+            self, nelem, elemsize, ncomp, compstride, lsize, offsets,
+        )
     }
 
     fn create_strided_elem_restriction(
@@ -277,15 +285,17 @@ impl<T: Scalar> Backend<T> for WgpuBackend<T> {
         lsize: usize,
         offsets: &[i32],
     ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>> {
-        Ok(Box::new(crate::elem_restriction::WgpuElemRestriction::<T>::new_offset(
-            nelem,
-            elemsize,
-            ncomp,
-            compstride,
-            lsize,
-            offsets,
-            self.runtime.clone(),
-        )?))
+        Ok(Box::new(
+            crate::elem_restriction::WgpuElemRestriction::<T>::new_offset(
+                nelem,
+                elemsize,
+                ncomp,
+                compstride,
+                lsize,
+                offsets,
+                self.runtime.clone(),
+            )?,
+        ))
     }
 
     fn create_strided_elem_restriction(
@@ -296,14 +306,16 @@ impl<T: Scalar> Backend<T> for WgpuBackend<T> {
         lsize: usize,
         strides: [i32; 3],
     ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>> {
-        Ok(Box::new(crate::elem_restriction::WgpuElemRestriction::<T>::new_strided(
-            nelem,
-            elemsize,
-            ncomp,
-            lsize,
-            strides,
-            self.runtime.clone(),
-        )?))
+        Ok(Box::new(
+            crate::elem_restriction::WgpuElemRestriction::<T>::new_strided(
+                nelem,
+                elemsize,
+                ncomp,
+                lsize,
+                strides,
+                self.runtime.clone(),
+            )?,
+        ))
     }
 
     fn create_basis_tensor_h1_lagrange(
@@ -359,15 +371,17 @@ impl<T: Scalar> reed_core::Backend<T> for WgpuBackend<T> {
         lsize: usize,
         offsets: &[i32],
     ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>> {
-        Ok(Box::new(crate::elem_restriction::WgpuElemRestriction::<T>::new_offset(
-            nelem,
-            elemsize,
-            ncomp,
-            compstride,
-            lsize,
-            offsets,
-            self.runtime.clone(),
-        )?))
+        Ok(Box::new(
+            crate::elem_restriction::WgpuElemRestriction::<T>::new_offset(
+                nelem,
+                elemsize,
+                ncomp,
+                compstride,
+                lsize,
+                offsets,
+                self.runtime.clone(),
+            )?,
+        ))
     }
 
     fn create_strided_elem_restriction(
@@ -378,14 +392,16 @@ impl<T: Scalar> reed_core::Backend<T> for WgpuBackend<T> {
         lsize: usize,
         strides: [i32; 3],
     ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>> {
-        Ok(Box::new(crate::elem_restriction::WgpuElemRestriction::<T>::new_strided(
-            nelem,
-            elemsize,
-            ncomp,
-            lsize,
-            strides,
-            self.runtime.clone(),
-        )?))
+        Ok(Box::new(
+            crate::elem_restriction::WgpuElemRestriction::<T>::new_strided(
+                nelem,
+                elemsize,
+                ncomp,
+                lsize,
+                strides,
+                self.runtime.clone(),
+            )?,
+        ))
     }
 
     fn create_basis_tensor_h1_lagrange(
@@ -398,7 +414,14 @@ impl<T: Scalar> reed_core::Backend<T> for WgpuBackend<T> {
     ) -> ReedResult<Box<dyn BasisTrait<T>>> {
         // On WASM, WgpuBasis doesn't implement BasisTrait (GPU runtime is not Send+Sync).
         // Fall back to CPU LagrangeBasis for basis evaluation.
-        reed_core::Backend::create_basis_tensor_h1_lagrange(&self.cpu_backend, dim, ncomp, p, q, qmode)
+        reed_core::Backend::create_basis_tensor_h1_lagrange(
+            &self.cpu_backend,
+            dim,
+            ncomp,
+            p,
+            q,
+            qmode,
+        )
     }
 
     fn create_basis_h1_simplex(

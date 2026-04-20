@@ -4,7 +4,6 @@
 /// - 1D: 区间长度，理论值 2
 /// - 2D: 正方形面积，理论值 4
 /// - 3D: 立方体体积，理论值 8
-
 use reed::{FieldVector, OperatorTrait, QuadMode, Reed};
 use std::env;
 
@@ -177,7 +176,11 @@ fn run_volume(
     println!("Computed value : {:.12}", computed);
     println!("Error          : {:.12e}", error);
 
-    let tol = if dim == 1 { 2.0e3 * f64::EPSILON } else { 1.0e-9 };
+    let tol = if dim == 1 {
+        2.0e3 * f64::EPSILON
+    } else {
+        1.0e-9
+    };
     if error > tol {
         return Err(format!("error too large: {:.3e} > tol {:.3e}", error, tol).into());
     }

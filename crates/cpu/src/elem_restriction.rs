@@ -112,12 +112,7 @@ impl<T: Scalar> CpuElemRestriction<T> {
     }
 
     #[cfg(not(feature = "parallel"))]
-    fn transpose_strided_serial(
-        &self,
-        strides: [i32; 3],
-        u: &[T],
-        v: &mut [T],
-    ) -> ReedResult<()> {
+    fn transpose_strided_serial(&self, strides: [i32; 3], u: &[T], v: &mut [T]) -> ReedResult<()> {
         for elem in 0..self.nelem {
             for comp in 0..self.ncomp {
                 for local in 0..self.elemsize {
@@ -196,8 +191,8 @@ impl<T: Scalar> ElemRestrictionTrait<T> for CpuElemRestriction<T> {
                                         &offsets[elem * self.elemsize..(elem + 1) * self.elemsize];
                                     for comp in 0..self.ncomp {
                                         let comp_base = comp * *compstride;
-                                        let v_comp =
-                                            &mut v_elem[comp * self.elemsize..(comp + 1) * self.elemsize];
+                                        let v_comp = &mut v_elem
+                                            [comp * self.elemsize..(comp + 1) * self.elemsize];
                                         for (local, dst) in v_comp.iter_mut().enumerate() {
                                             let base = elem_offsets[local];
                                             if base < 0 {

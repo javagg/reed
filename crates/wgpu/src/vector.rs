@@ -1,9 +1,7 @@
 use std::{any::TypeId, sync::Arc};
 
 use num_traits::NumCast;
-use reed_core::{
-    enums::NormType, error::ReedResult, scalar::Scalar, VectorTrait, ReedError,
-};
+use reed_core::{enums::NormType, error::ReedResult, scalar::Scalar, ReedError, VectorTrait};
 use wgpu::util::DeviceExt;
 
 use crate::runtime::GpuRuntime;
@@ -48,7 +46,9 @@ impl<T: Scalar> WgpuVector<T> {
 
     fn from_f32_into(data: &mut [T], f32_data: &[f32]) -> ReedResult<()> {
         if data.len() != f32_data.len() {
-            return Err(ReedError::Vector("size mismatch during gpu readback".into()));
+            return Err(ReedError::Vector(
+                "size mismatch during gpu readback".into(),
+            ));
         }
         // Fast path for f32: direct copy
         if let Some(dst) = Self::as_f32_slice_mut(data) {
@@ -89,20 +89,22 @@ impl<T: Scalar> WgpuVector<T> {
                 usage: wgpu::BufferUsages::UNIFORM,
             });
 
-        let bind = runtime.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("wgpu-vector-bind-set"),
-            layout: runtime.set_layout(),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: y_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: p_buffer.as_entire_binding(),
-                },
-            ],
-        });
+        let bind = runtime
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("wgpu-vector-bind-set"),
+                layout: runtime.set_layout(),
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: y_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: p_buffer.as_entire_binding(),
+                    },
+                ],
+            });
 
         let readback = runtime.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("wgpu-vector-readback-set"),
@@ -170,20 +172,22 @@ impl<T: Scalar> WgpuVector<T> {
                 usage: wgpu::BufferUsages::UNIFORM,
             });
 
-        let bind = runtime.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("wgpu-vector-bind-scale"),
-            layout: runtime.scale_layout(),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: y_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: p_buffer.as_entire_binding(),
-                },
-            ],
-        });
+        let bind = runtime
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("wgpu-vector-bind-scale"),
+                layout: runtime.scale_layout(),
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: y_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: p_buffer.as_entire_binding(),
+                    },
+                ],
+            });
 
         let readback = runtime.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("wgpu-vector-readback-scale"),
@@ -262,24 +266,26 @@ impl<T: Scalar> WgpuVector<T> {
                 usage: wgpu::BufferUsages::UNIFORM,
             });
 
-        let bind = runtime.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("wgpu-vector-bind-axpy"),
-            layout: runtime.axpy_layout(),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: y_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: x_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: p_buffer.as_entire_binding(),
-                },
-            ],
-        });
+        let bind = runtime
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("wgpu-vector-bind-axpy"),
+                layout: runtime.axpy_layout(),
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: y_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: x_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: p_buffer.as_entire_binding(),
+                    },
+                ],
+            });
 
         let readback = runtime.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("wgpu-vector-readback-axpy"),

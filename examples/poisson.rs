@@ -89,7 +89,12 @@ fn build_coords_components(dim: usize, ndofs_1d: usize) -> Vec<Vec<f64>> {
     comps
 }
 
-fn run_poisson(dim: usize, nelem_1d: usize, p: usize, q: usize) -> Result<(), Box<dyn std::error::Error>> {
+fn run_poisson(
+    dim: usize,
+    nelem_1d: usize,
+    p: usize,
+    q: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
     let reed = Reed::<f64>::init("/cpu/self")?;
 
     let ndofs_1d = nelem_1d * (p - 1) + 1;
@@ -142,7 +147,10 @@ fn run_poisson(dim: usize, nelem_1d: usize, p: usize, q: usize) -> Result<(), Bo
         v.copy_to_slice(&mut values)?;
         println!("Poisson example (1D)");
         println!("nelem_1d={nelem_1d}, p={p}, q={q}");
-        println!("output norm1 = {:.12e}", values.iter().map(|x| x.abs()).sum::<f64>());
+        println!(
+            "output norm1 = {:.12e}",
+            values.iter().map(|x| x.abs()).sum::<f64>()
+        );
         return Ok(());
     }
 
@@ -164,7 +172,11 @@ fn run_poisson(dim: usize, nelem_1d: usize, p: usize, q: usize) -> Result<(), Bo
     let mut qdata = reed.vector(nelem * qpts_per_elem * qdata_comp)?;
     qdata.set_value(0.0)?;
 
-    let qf_build = if dim == 2 { "Poisson2DBuild" } else { "Poisson3DBuild" };
+    let qf_build = if dim == 2 {
+        "Poisson2DBuild"
+    } else {
+        "Poisson3DBuild"
+    };
     let op_build = reed
         .operator_builder()
         .qfunction(reed.q_function_by_name(qf_build)?)
@@ -184,7 +196,11 @@ fn run_poisson(dim: usize, nelem_1d: usize, p: usize, q: usize) -> Result<(), Bo
     let mut v = reed.vector(ndofs)?;
     v.set_value(0.0)?;
 
-    let qf_apply = if dim == 2 { "Poisson2DApply" } else { "Poisson3DApply" };
+    let qf_apply = if dim == 2 {
+        "Poisson2DApply"
+    } else {
+        "Poisson3DApply"
+    };
     let op = reed
         .operator_builder()
         .qfunction(reed.q_function_by_name(qf_apply)?)
@@ -198,7 +214,10 @@ fn run_poisson(dim: usize, nelem_1d: usize, p: usize, q: usize) -> Result<(), Bo
     v.copy_to_slice(&mut values)?;
     println!("Poisson example ({dim}D)");
     println!("nelem_1d={nelem_1d}, p={p}, q={q}");
-    println!("output norm1 = {:.12e}", values.iter().map(|x| x.abs()).sum::<f64>());
+    println!(
+        "output norm1 = {:.12e}",
+        values.iter().map(|x| x.abs()).sum::<f64>()
+    );
     Ok(())
 }
 

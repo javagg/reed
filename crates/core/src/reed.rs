@@ -176,9 +176,9 @@ impl<T: Scalar> Reed<T> {
         lsize: usize,
         offsets: &[i32],
     ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>> {
-        let expected = nelem
-            .checked_mul(npoints_per_elem)
-            .ok_or_else(|| ReedError::InvalidArgument("elem_restriction_at_points: size overflow".into()))?;
+        let expected = nelem.checked_mul(npoints_per_elem).ok_or_else(|| {
+            ReedError::InvalidArgument("elem_restriction_at_points: size overflow".into())
+        })?;
         if offsets.len() != expected {
             return Err(ReedError::InvalidArgument(format!(
                 "elem_restriction_at_points: offsets.len() {} != nelem * npoints_per_elem ({})",
@@ -199,8 +199,7 @@ impl<T: Scalar> Reed<T> {
         q: usize,
         qmode: QuadMode,
     ) -> ReedResult<Box<dyn BasisTrait<T>>> {
-        (**self.backend.lock().unwrap())
-            .create_basis_tensor_h1_lagrange(dim, ncomp, p, q, qmode)
+        (**self.backend.lock().unwrap()).create_basis_tensor_h1_lagrange(dim, ncomp, p, q, qmode)
     }
 
     /// Create an H1 Lagrange basis on a simplex reference element.

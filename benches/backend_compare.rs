@@ -1,5 +1,5 @@
 #[cfg(feature = "wgpu-backend")]
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 #[cfg(feature = "wgpu-backend")]
 use reed::{EvalMode, QuadMode, Reed, TransposeMode};
 
@@ -23,20 +23,16 @@ fn bench_compare_vector_axpy(c: &mut Criterion) {
 
     for &size in &[4_096usize, 65_536, 1_048_576] {
         for &(backend, reed) in &[("cpu", &reed_cpu), ("wgpu", &reed_gpu)] {
-            group.bench_with_input(
-                BenchmarkId::new(backend, size),
-                &size,
-                |b, &size| {
-                    let x_seed = vec![0.5_f32; size];
-                    let y_seed = vec![1.0_f32; size];
-                    let x = reed.vector_from_slice(&x_seed).unwrap();
-                    let mut y = reed.vector_from_slice(&y_seed).unwrap();
-                    b.iter(|| {
-                        y.copy_from_slice(&y_seed).unwrap();
-                        y.axpy(black_box(2.0_f32), &*x).unwrap();
-                    });
-                },
-            );
+            group.bench_with_input(BenchmarkId::new(backend, size), &size, |b, &size| {
+                let x_seed = vec![0.5_f32; size];
+                let y_seed = vec![1.0_f32; size];
+                let x = reed.vector_from_slice(&x_seed).unwrap();
+                let mut y = reed.vector_from_slice(&y_seed).unwrap();
+                b.iter(|| {
+                    y.copy_from_slice(&y_seed).unwrap();
+                    y.axpy(black_box(2.0_f32), &*x).unwrap();
+                });
+            });
         }
     }
 
@@ -342,5 +338,7 @@ criterion_main!(benches);
 
 #[cfg(not(feature = "wgpu-backend"))]
 fn main() {
-    eprintln!("Run this benchmark with: cargo bench --features wgpu-backend --bench backend_compare");
+    eprintln!(
+        "Run this benchmark with: cargo bench --features wgpu-backend --bench backend_compare"
+    );
 }

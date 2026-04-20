@@ -33,10 +33,7 @@ impl OperatorTrait<f64> for ScaleOp {
         Ok(())
     }
 
-    fn linear_assemble_diagonal(
-        &self,
-        assembled: &mut dyn VectorTrait<f64>,
-    ) -> ReedResult<()> {
+    fn linear_assemble_diagonal(&self, assembled: &mut dyn VectorTrait<f64>) -> ReedResult<()> {
         assembled.set_value(0.0)?;
         for i in 0..self.n {
             assembled.as_mut_slice()[i] = self.scale;

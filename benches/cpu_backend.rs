@@ -48,8 +48,7 @@ fn build_offsets_2d(nelem_1d: usize, p: usize, ndofs_1d: usize) -> Vec<i32> {
 }
 
 fn build_offsets_3d(nelem_1d: usize, p: usize, ndofs_1d: usize) -> Vec<i32> {
-    let mut offsets =
-        Vec::with_capacity(nelem_1d * nelem_1d * nelem_1d * p * p * p);
+    let mut offsets = Vec::with_capacity(nelem_1d * nelem_1d * nelem_1d * p * p * p);
     for ez in 0..nelem_1d {
         for ey in 0..nelem_1d {
             for ex in 0..nelem_1d {
@@ -60,8 +59,7 @@ fn build_offsets_3d(nelem_1d: usize, p: usize, ndofs_1d: usize) -> Vec<i32> {
                     for jy in 0..p {
                         for jx in 0..p {
                             offsets.push(
-                                (((sz + jz) * ndofs_1d + (sy + jy)) * ndofs_1d + (sx + jx))
-                                    as i32,
+                                (((sz + jz) * ndofs_1d + (sy + jy)) * ndofs_1d + (sx + jx)) as i32,
                             );
                         }
                     }
@@ -176,9 +174,7 @@ fn build_simplex_basis_apply(
     eval_mode: EvalMode,
 ) -> BasisApplyScenario {
     let reed = Reed::<f64>::init("/cpu/self").unwrap();
-    let basis = reed
-        .basis_h1_simplex(topo, poly, ncomp, q)
-        .unwrap();
+    let basis = reed.basis_h1_simplex(topo, poly, ncomp, q).unwrap();
     let ne = num_elem;
     let nd = basis.num_dof();
     let nq = basis.num_qpoints();
@@ -215,12 +211,18 @@ fn build_poisson_apply(dim: usize, nelem_1d: usize, p: usize, q: usize) -> Apply
 
     if dim == 1 {
         let node_coords = &comps[0];
-        let r_u = leak_box(reed.elem_restriction(nelem, p, 1, 1, ndofs, &offsets).unwrap());
+        let r_u = leak_box(
+            reed.elem_restriction(nelem, p, 1, 1, ndofs, &offsets)
+                .unwrap(),
+        );
         let r_q = leak_box(
             reed.strided_elem_restriction(nelem, q, 1, nelem * q, [1, q as i32, q as i32])
                 .unwrap(),
         );
-        let b_u = leak_box(reed.basis_tensor_h1_lagrange(1, 1, p, q, QuadMode::Gauss).unwrap());
+        let b_u = leak_box(
+            reed.basis_tensor_h1_lagrange(1, 1, p, q, QuadMode::Gauss)
+                .unwrap(),
+        );
         let x_coord = leak_box(reed.vector_from_slice(node_coords).unwrap());
         let qdata = leak_box(reed.vector(nelem * q).unwrap());
         qdata.set_value(0.0).unwrap();
@@ -260,7 +262,10 @@ fn build_poisson_apply(dim: usize, nelem_1d: usize, p: usize, q: usize) -> Apply
         reed.elem_restriction(nelem, elemsize, dim, ndofs, dim * ndofs, &offsets)
             .unwrap(),
     );
-    let r_u = leak_box(reed.elem_restriction(nelem, elemsize, 1, 1, ndofs, &offsets).unwrap());
+    let r_u = leak_box(
+        reed.elem_restriction(nelem, elemsize, 1, 1, ndofs, &offsets)
+            .unwrap(),
+    );
     let b_x = leak_box(
         reed.basis_tensor_h1_lagrange(dim, dim, p, q, QuadMode::Gauss)
             .unwrap(),
@@ -283,7 +288,11 @@ fn build_poisson_apply(dim: usize, nelem_1d: usize, p: usize, q: usize) -> Apply
     let qdata = leak_box(reed.vector(nelem * qpts_per_elem * qdata_comp).unwrap());
     qdata.set_value(0.0).unwrap();
 
-    let qf_build = if dim == 2 { "Poisson2DBuild" } else { "Poisson3DBuild" };
+    let qf_build = if dim == 2 {
+        "Poisson2DBuild"
+    } else {
+        "Poisson3DBuild"
+    };
     let op_build = reed
         .operator_builder()
         .qfunction(reed.q_function_by_name(qf_build).unwrap())
@@ -303,7 +312,11 @@ fn build_poisson_apply(dim: usize, nelem_1d: usize, p: usize, q: usize) -> Apply
     let input = leak_box(reed.vector_from_slice(&u_vals).unwrap());
     let output = leak_box(reed.vector(ndofs).unwrap());
     output.set_value(0.0).unwrap();
-    let qf_apply = if dim == 2 { "Poisson2DApply" } else { "Poisson3DApply" };
+    let qf_apply = if dim == 2 {
+        "Poisson2DApply"
+    } else {
+        "Poisson3DApply"
+    };
     let operator = Box::new(
         reed.operator_builder()
             .qfunction(reed.q_function_by_name(qf_apply).unwrap())
@@ -335,7 +348,10 @@ fn build_combined_apply(dim: usize, nelem_1d: usize, p: usize, q: usize) -> Appl
         _ => unreachable!(),
     };
 
-    let r_u = leak_box(reed.elem_restriction(nelem, elemsize, 1, 1, ndofs, &offsets).unwrap());
+    let r_u = leak_box(
+        reed.elem_restriction(nelem, elemsize, 1, 1, ndofs, &offsets)
+            .unwrap(),
+    );
     let b_u = leak_box(
         reed.basis_tensor_h1_lagrange(dim, 1, p, q, QuadMode::Gauss)
             .unwrap(),
@@ -423,15 +439,21 @@ fn build_combined_apply(dim: usize, nelem_1d: usize, p: usize, q: usize) -> Appl
         let op_build_poisson = reed
             .operator_builder()
             .qfunction(
-                reed.q_function_by_name(if dim == 2 { "Poisson2DBuild" } else { "Poisson3DBuild" })
-                    .unwrap(),
+                reed.q_function_by_name(if dim == 2 {
+                    "Poisson2DBuild"
+                } else {
+                    "Poisson3DBuild"
+                })
+                .unwrap(),
             )
             .field("dx", Some(&**r_x), Some(&**b_x), FieldVector::Active)
             .field("weights", None, Some(&**b_x), FieldVector::None)
             .field("qdata", Some(&**r_q), None, FieldVector::Active)
             .build()
             .unwrap();
-        op_build_poisson.apply(&**x_coord, &mut **qdata_vec).unwrap();
+        op_build_poisson
+            .apply(&**x_coord, &mut **qdata_vec)
+            .unwrap();
         (r_q, qdata_vec)
     };
 
@@ -440,70 +462,107 @@ fn build_combined_apply(dim: usize, nelem_1d: usize, p: usize, q: usize) -> Appl
     output.set_value(0.0).unwrap();
     let operator = Box::new(
         reed.operator_builder()
-            .qfunction(reed.q_function_interior(
-                1,
-                vec![
-                    reed::QFunctionField { name: "u".into(), num_comp: 1, eval_mode: reed::EvalMode::Interp },
-                    reed::QFunctionField { name: "qdata_mass".into(), num_comp: 1, eval_mode: reed::EvalMode::None },
-                    reed::QFunctionField { name: "du".into(), num_comp: dim, eval_mode: reed::EvalMode::Grad },
-                    reed::QFunctionField { name: "qdata_poisson".into(), num_comp: dim * dim, eval_mode: reed::EvalMode::None },
-                ],
-                vec![
-                    reed::QFunctionField { name: "v".into(), num_comp: 1, eval_mode: reed::EvalMode::Interp },
-                    reed::QFunctionField { name: "dv".into(), num_comp: dim, eval_mode: reed::EvalMode::Grad },
-                ],
-                0,
-                Box::new(move |_ctx, q, inputs, outputs| {
-                    let u = inputs[0];
-                    let qdata_mass = inputs[1];
-                    let du = inputs[2];
-                    let qdata_poisson = inputs[3];
-                    let (v_out, dv_out) = outputs.split_at_mut(1);
-                    let v = &mut v_out[0];
-                    let dv = &mut dv_out[0];
-                    for i in 0..q {
-                        v[i] = u[i] * qdata_mass[i];
-                        match dim {
-                            1 => {
-                                dv[i] = du[i] * qdata_poisson[i];
+            .qfunction(
+                reed.q_function_interior(
+                    1,
+                    vec![
+                        reed::QFunctionField {
+                            name: "u".into(),
+                            num_comp: 1,
+                            eval_mode: reed::EvalMode::Interp,
+                        },
+                        reed::QFunctionField {
+                            name: "qdata_mass".into(),
+                            num_comp: 1,
+                            eval_mode: reed::EvalMode::None,
+                        },
+                        reed::QFunctionField {
+                            name: "du".into(),
+                            num_comp: dim,
+                            eval_mode: reed::EvalMode::Grad,
+                        },
+                        reed::QFunctionField {
+                            name: "qdata_poisson".into(),
+                            num_comp: dim * dim,
+                            eval_mode: reed::EvalMode::None,
+                        },
+                    ],
+                    vec![
+                        reed::QFunctionField {
+                            name: "v".into(),
+                            num_comp: 1,
+                            eval_mode: reed::EvalMode::Interp,
+                        },
+                        reed::QFunctionField {
+                            name: "dv".into(),
+                            num_comp: dim,
+                            eval_mode: reed::EvalMode::Grad,
+                        },
+                    ],
+                    0,
+                    Box::new(move |_ctx, q, inputs, outputs| {
+                        let u = inputs[0];
+                        let qdata_mass = inputs[1];
+                        let du = inputs[2];
+                        let qdata_poisson = inputs[3];
+                        let (v_out, dv_out) = outputs.split_at_mut(1);
+                        let v = &mut v_out[0];
+                        let dv = &mut dv_out[0];
+                        for i in 0..q {
+                            v[i] = u[i] * qdata_mass[i];
+                            match dim {
+                                1 => {
+                                    dv[i] = du[i] * qdata_poisson[i];
+                                }
+                                2 => {
+                                    let du0 = du[i * 2];
+                                    let du1 = du[i * 2 + 1];
+                                    let g00 = qdata_poisson[i * 4];
+                                    let g01 = qdata_poisson[i * 4 + 1];
+                                    let g10 = qdata_poisson[i * 4 + 2];
+                                    let g11 = qdata_poisson[i * 4 + 3];
+                                    dv[i * 2] = g00 * du0 + g01 * du1;
+                                    dv[i * 2 + 1] = g10 * du0 + g11 * du1;
+                                }
+                                3 => {
+                                    let du0 = du[i * 3];
+                                    let du1 = du[i * 3 + 1];
+                                    let du2 = du[i * 3 + 2];
+                                    let g00 = qdata_poisson[i * 9];
+                                    let g01 = qdata_poisson[i * 9 + 1];
+                                    let g02 = qdata_poisson[i * 9 + 2];
+                                    let g10 = qdata_poisson[i * 9 + 3];
+                                    let g11 = qdata_poisson[i * 9 + 4];
+                                    let g12 = qdata_poisson[i * 9 + 5];
+                                    let g20 = qdata_poisson[i * 9 + 6];
+                                    let g21 = qdata_poisson[i * 9 + 7];
+                                    let g22 = qdata_poisson[i * 9 + 8];
+                                    dv[i * 3] = g00 * du0 + g01 * du1 + g02 * du2;
+                                    dv[i * 3 + 1] = g10 * du0 + g11 * du1 + g12 * du2;
+                                    dv[i * 3 + 2] = g20 * du0 + g21 * du1 + g22 * du2;
+                                }
+                                _ => unreachable!(),
                             }
-                            2 => {
-                                let du0 = du[i * 2];
-                                let du1 = du[i * 2 + 1];
-                                let g00 = qdata_poisson[i * 4];
-                                let g01 = qdata_poisson[i * 4 + 1];
-                                let g10 = qdata_poisson[i * 4 + 2];
-                                let g11 = qdata_poisson[i * 4 + 3];
-                                dv[i * 2] = g00 * du0 + g01 * du1;
-                                dv[i * 2 + 1] = g10 * du0 + g11 * du1;
-                            }
-                            3 => {
-                                let du0 = du[i * 3];
-                                let du1 = du[i * 3 + 1];
-                                let du2 = du[i * 3 + 2];
-                                let g00 = qdata_poisson[i * 9];
-                                let g01 = qdata_poisson[i * 9 + 1];
-                                let g02 = qdata_poisson[i * 9 + 2];
-                                let g10 = qdata_poisson[i * 9 + 3];
-                                let g11 = qdata_poisson[i * 9 + 4];
-                                let g12 = qdata_poisson[i * 9 + 5];
-                                let g20 = qdata_poisson[i * 9 + 6];
-                                let g21 = qdata_poisson[i * 9 + 7];
-                                let g22 = qdata_poisson[i * 9 + 8];
-                                dv[i * 3] = g00 * du0 + g01 * du1 + g02 * du2;
-                                dv[i * 3 + 1] = g10 * du0 + g11 * du1 + g12 * du2;
-                                dv[i * 3 + 2] = g20 * du0 + g21 * du1 + g22 * du2;
-                            }
-                            _ => unreachable!(),
                         }
-                    }
-                    Ok(())
-                }),
-            ).unwrap())
+                        Ok(())
+                    }),
+                )
+                .unwrap(),
+            )
             .field("u", Some(&**r_u), Some(&**b_u), FieldVector::Active)
-            .field("qdata_mass", Some(&**r_q_mass), None, FieldVector::Passive(&**qdata_mass))
+            .field(
+                "qdata_mass",
+                Some(&**r_q_mass),
+                None,
+                FieldVector::Passive(&**qdata_mass),
+            )
             .field("du", Some(&**r_u), Some(&**b_u), FieldVector::Active)
-            .field("qdata_poisson", Some(&**r_q_poisson), None, FieldVector::Passive(&**qdata_poisson))
+            .field(
+                "qdata_poisson",
+                Some(&**r_q_poisson),
+                None,
+                FieldVector::Passive(&**qdata_poisson),
+            )
             .field("v", Some(&**r_u), Some(&**b_u), FieldVector::Active)
             .field("dv", Some(&**r_u), Some(&**b_u), FieldVector::Active)
             .build()
@@ -634,25 +693,15 @@ fn bench_simplex_basis_apply(c: &mut Criterion) {
             (EvalMode::Grad, false, "grad"),
             (EvalMode::Grad, true, "grad_t"),
         ] {
-            let mut scenario = build_simplex_basis_apply(
-                topo,
-                poly,
-                1,
-                q,
-                num_elem,
-                transpose,
-                eval_mode,
-            );
+            let mut scenario =
+                build_simplex_basis_apply(topo, poly, 1, q, num_elem, transpose, eval_mode);
             let topo_label = if topo == ElemTopology::Triangle {
                 "tri"
             } else {
                 "tet"
             };
             group.bench_with_input(
-                BenchmarkId::new(
-                    label,
-                    format!("{topo_label}_p{poly}_q{q}_e{num_elem}"),
-                ),
+                BenchmarkId::new(label, format!("{topo_label}_p{poly}_q{q}_e{num_elem}")),
                 &(poly, q, num_elem),
                 |b, _| {
                     b.iter(|| {

@@ -36,11 +36,7 @@ impl<T: Scalar> CompositeOperator<T> {
 }
 
 impl<T: Scalar> OperatorTrait<T> for CompositeOperator<T> {
-    fn apply(
-        &self,
-        input: &dyn VectorTrait<T>,
-        output: &mut dyn VectorTrait<T>,
-    ) -> ReedResult<()> {
+    fn apply(&self, input: &dyn VectorTrait<T>, output: &mut dyn VectorTrait<T>) -> ReedResult<()> {
         output.set_value(T::ZERO)?;
         for op in &self.ops {
             op.apply_add(input, output)?;
@@ -59,10 +55,7 @@ impl<T: Scalar> OperatorTrait<T> for CompositeOperator<T> {
         Ok(())
     }
 
-    fn linear_assemble_diagonal(
-        &self,
-        assembled: &mut dyn VectorTrait<T>,
-    ) -> ReedResult<()> {
+    fn linear_assemble_diagonal(&self, assembled: &mut dyn VectorTrait<T>) -> ReedResult<()> {
         let n = assembled.len();
         assembled.set_value(T::ZERO)?;
         let mut tmp = CpuVector::new(n);
@@ -109,10 +102,7 @@ mod tests {
             Ok(())
         }
 
-        fn linear_assemble_diagonal(
-            &self,
-            assembled: &mut dyn VectorTrait<f64>,
-        ) -> ReedResult<()> {
+        fn linear_assemble_diagonal(&self, assembled: &mut dyn VectorTrait<f64>) -> ReedResult<()> {
             assembled.set_value(0.0)?;
             for i in 0..self.n {
                 assembled.as_mut_slice()[i] = self.scale;

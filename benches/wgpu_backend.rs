@@ -1,5 +1,5 @@
 #[cfg(feature = "wgpu-backend")]
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 #[cfg(feature = "wgpu-backend")]
 use reed::{EvalMode, QuadMode, Reed};
 

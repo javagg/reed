@@ -2,8 +2,7 @@ use std::{any::TypeId, sync::Arc};
 
 use num_traits::NumCast;
 use reed_core::{
-    ElemRestrictionTrait, enums::TransposeMode, error::ReedResult,
-    scalar::Scalar, ReedError,
+    enums::TransposeMode, error::ReedResult, scalar::Scalar, ElemRestrictionTrait, ReedError,
 };
 use reed_cpu::elem_restriction::CpuElemRestriction;
 use wgpu::util::DeviceExt;
@@ -41,8 +40,9 @@ impl<T: Scalar> WgpuElemRestriction<T> {
         offsets: &[i32],
         runtime: Option<Arc<GpuRuntime>>,
     ) -> ReedResult<Self> {
-        let cpu_fallback =
-            CpuElemRestriction::<T>::new_offset(nelem, elemsize, ncomp, compstride, lsize, offsets)?;
+        let cpu_fallback = CpuElemRestriction::<T>::new_offset(
+            nelem, elemsize, ncomp, compstride, lsize, offsets,
+        )?;
         Ok(Self {
             nelem,
             elemsize,
@@ -119,7 +119,11 @@ impl<T: Scalar> WgpuElemRestriction<T> {
             )));
         }
 
-        let Some(u_f32) = u.iter().map(|x| NumCast::from(*x)).collect::<Option<Vec<f32>>>() else {
+        let Some(u_f32) = u
+            .iter()
+            .map(|x| NumCast::from(*x))
+            .collect::<Option<Vec<f32>>>()
+        else {
             return Ok(false);
         };
         let mut v_f32 = vec![0.0_f32; local_size];
@@ -132,14 +136,13 @@ impl<T: Scalar> WgpuElemRestriction<T> {
                 usage: wgpu::BufferUsages::STORAGE,
             });
 
-        let offsets_buffer =
-            runtime
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("wgpu-restriction-offsets"),
-                    contents: bytemuck::cast_slice(offsets),
-                    usage: wgpu::BufferUsages::STORAGE,
-                });
+        let offsets_buffer = runtime
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("wgpu-restriction-offsets"),
+                contents: bytemuck::cast_slice(offsets),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
 
         let v_buffer = runtime
             .device
@@ -169,28 +172,30 @@ impl<T: Scalar> WgpuElemRestriction<T> {
                 usage: wgpu::BufferUsages::UNIFORM,
             });
 
-        let bind = runtime.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("wgpu-restriction-bind"),
-            layout: runtime.restriction_layout(),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: u_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: offsets_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: v_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: p_buffer.as_entire_binding(),
-                },
-            ],
-        });
+        let bind = runtime
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("wgpu-restriction-bind"),
+                layout: runtime.restriction_layout(),
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: u_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: offsets_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: v_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: p_buffer.as_entire_binding(),
+                    },
+                ],
+            });
 
         let readback = runtime.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("wgpu-restriction-readback"),
@@ -266,7 +271,11 @@ impl<T: Scalar> WgpuElemRestriction<T> {
             )));
         }
 
-        let Some(u_f32) = u.iter().map(|x| NumCast::from(*x)).collect::<Option<Vec<f32>>>() else {
+        let Some(u_f32) = u
+            .iter()
+            .map(|x| NumCast::from(*x))
+            .collect::<Option<Vec<f32>>>()
+        else {
             return Ok(false);
         };
 
@@ -286,14 +295,13 @@ impl<T: Scalar> WgpuElemRestriction<T> {
                 usage: wgpu::BufferUsages::STORAGE,
             });
 
-        let offsets_buffer =
-            runtime
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("wgpu-restriction-t-off"),
-                    contents: bytemuck::cast_slice(offsets),
-                    usage: wgpu::BufferUsages::STORAGE,
-                });
+        let offsets_buffer = runtime
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("wgpu-restriction-t-off"),
+                contents: bytemuck::cast_slice(offsets),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
 
         let v_buffer = runtime
             .device
@@ -323,28 +331,30 @@ impl<T: Scalar> WgpuElemRestriction<T> {
                 usage: wgpu::BufferUsages::UNIFORM,
             });
 
-        let bind = runtime.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("wgpu-restriction-t-bind"),
-            layout: runtime.restriction_layout(),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: u_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: offsets_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: v_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: p_buffer.as_entire_binding(),
-                },
-            ],
-        });
+        let bind = runtime
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("wgpu-restriction-t-bind"),
+                layout: runtime.restriction_layout(),
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: u_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: offsets_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: v_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: p_buffer.as_entire_binding(),
+                    },
+                ],
+            });
 
         let readback = runtime.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("wgpu-restriction-t-readback"),
@@ -380,7 +390,9 @@ impl<T: Scalar> WgpuElemRestriction<T> {
         map_readback_f32(&runtime.device, &readback, &mut v_out)?;
         for (dst, src) in v.iter_mut().zip(v_out.iter()) {
             *dst = NumCast::from(*src).ok_or_else(|| {
-                ReedError::ElemRestriction("f32->T conversion failed after transpose readback".into())
+                ReedError::ElemRestriction(
+                    "f32->T conversion failed after transpose readback".into(),
+                )
             })?;
         }
         Ok(true)

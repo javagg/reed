@@ -19,7 +19,9 @@ pub use reed_core::{
     OperatorTrait, QFunctionClosure, QFunctionContext, QFunctionField, QFunctionTrait, QuadMode,
     ReedError, ReedResult, Scalar, TransposeMode, VectorTrait,
 };
-pub use reed_cpu::{q_function_by_name, CompositeOperator, CpuBackend, FieldVector, OperatorBuilder};
+pub use reed_cpu::{
+    q_function_by_name, CompositeOperator, CpuBackend, FieldVector, OperatorBuilder,
+};
 #[cfg(feature = "wgpu-backend")]
 pub use reed_wgpu::WgpuBackend;
 
@@ -300,7 +302,8 @@ fn resolve_backend_request(
                     requested,
                     effective_resource: "/gpu/wgpu".to_string(),
                     capabilities: caps,
-                    note: "Requested gpu/wgpu and feature is enabled; using reed wgpu backend.".to_string(),
+                    note: "Requested gpu/wgpu and feature is enabled; using reed wgpu backend."
+                        .to_string(),
                 }
             } else {
                 ReedBackendSelectionReport {
@@ -363,7 +366,10 @@ mod tests {
             Reed::<f64>::parse_backend_request("/gpu/hip"),
             Some(ReedBackendRequest::GpuHip)
         );
-        assert_eq!(Reed::<f64>::parse_backend_request("/unknown/resource"), None);
+        assert_eq!(
+            Reed::<f64>::parse_backend_request("/unknown/resource"),
+            None
+        );
     }
 
     #[test]

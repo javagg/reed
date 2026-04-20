@@ -1,7 +1,7 @@
 use js_sys::Date;
 use reed::{FieldVector, OperatorTrait, QuadMode, Reed};
-use serde::Serialize;
 use serde::Deserialize;
+use serde::Serialize;
 
 use wasm_bindgen::prelude::*;
 
@@ -10,7 +10,6 @@ use reed_wgpu::WgpuBackend;
 
 #[cfg(feature = "wasm-gpu")]
 use std::sync::Arc;
-
 
 #[cfg(feature = "wasm-gpu")]
 use std::thread_local;
@@ -32,7 +31,10 @@ impl reed_core::Backend<f64> for WgpuBackendWrap {
         reed_core::Backend::<f64>::resource_name(&*self.0)
     }
 
-    fn create_vector(&self, size: usize) -> reed_core::ReedResult<Box<dyn reed_core::VectorTrait<f64>>> {
+    fn create_vector(
+        &self,
+        size: usize,
+    ) -> reed_core::ReedResult<Box<dyn reed_core::VectorTrait<f64>>> {
         reed_core::Backend::<f64>::create_vector(&*self.0, size)
     }
 
@@ -45,7 +47,9 @@ impl reed_core::Backend<f64> for WgpuBackendWrap {
         lsize: usize,
         offsets: &[i32],
     ) -> reed_core::ReedResult<Box<dyn reed_core::ElemRestrictionTrait<f64>>> {
-        reed_core::Backend::<f64>::create_elem_restriction(&*self.0, nelem, elemsize, ncomp, compstride, lsize, offsets)
+        reed_core::Backend::<f64>::create_elem_restriction(
+            &*self.0, nelem, elemsize, ncomp, compstride, lsize, offsets,
+        )
     }
 
     fn create_strided_elem_restriction(
@@ -56,7 +60,9 @@ impl reed_core::Backend<f64> for WgpuBackendWrap {
         lsize: usize,
         strides: [i32; 3],
     ) -> reed_core::ReedResult<Box<dyn reed_core::ElemRestrictionTrait<f64>>> {
-        reed_core::Backend::<f64>::create_strided_elem_restriction(&*self.0, nelem, elemsize, ncomp, lsize, strides)
+        reed_core::Backend::<f64>::create_strided_elem_restriction(
+            &*self.0, nelem, elemsize, ncomp, lsize, strides,
+        )
     }
 
     fn create_basis_tensor_h1_lagrange(
@@ -67,7 +73,9 @@ impl reed_core::Backend<f64> for WgpuBackendWrap {
         q: usize,
         qmode: reed_core::enums::QuadMode,
     ) -> reed_core::ReedResult<Box<dyn reed_core::BasisTrait<f64>>> {
-        reed_core::Backend::<f64>::create_basis_tensor_h1_lagrange(&*self.0, dim, ncomp, p, q, qmode)
+        reed_core::Backend::<f64>::create_basis_tensor_h1_lagrange(
+            &*self.0, dim, ncomp, p, q, qmode,
+        )
     }
 
     fn create_basis_h1_simplex(
@@ -144,8 +152,8 @@ struct RunExampleArgs {
 /// `args` is a plain JS object decoded from JSON.
 #[wasm_bindgen]
 pub fn run_example(args: JsValue) -> Result<JsValue, JsValue> {
-    let parsed: RunExampleArgs = serde_wasm_bindgen::from_value(args)
-        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let parsed: RunExampleArgs =
+        serde_wasm_bindgen::from_value(args).map_err(|e| JsValue::from_str(&e.to_string()))?;
 
     let backend_str = parsed.backend.as_str();
     let mut logs = vec![
@@ -177,8 +185,12 @@ pub fn run_example(args: JsValue) -> Result<JsValue, JsValue> {
             {
                 let backend = WGPU_BACKEND
                     .with(|cell| cell.borrow().clone())
-                    .ok_or_else(|| JsValue::from_str("wgpu not initialized; call init_wgpu() first"))?;
-                Reed::from_backend(Arc::new(WgpuBackendWrap(backend)) as Arc<dyn reed_core::Backend<f64>>)
+                    .ok_or_else(|| {
+                        JsValue::from_str("wgpu not initialized; call init_wgpu() first")
+                    })?;
+                Reed::from_backend(
+                    Arc::new(WgpuBackendWrap(backend)) as Arc<dyn reed_core::Backend<f64>>
+                )
             }
             #[cfg(not(feature = "wasm-gpu"))]
             {
@@ -188,7 +200,9 @@ pub fn run_example(args: JsValue) -> Result<JsValue, JsValue> {
             }
         }
         _ => {
-            return Err(JsValue::from_str(&format!("unknown backend: {backend_str}")));
+            return Err(JsValue::from_str(&format!(
+                "unknown backend: {backend_str}"
+            )));
         }
     };
 
@@ -196,12 +210,38 @@ pub fn run_example(args: JsValue) -> Result<JsValue, JsValue> {
     let t0 = Date::now();
 
     let (value, expected, error) = match parsed.example.as_str() {
-        "ex1_volume" => run_ex1(&reed, parsed.dim, parsed.nelem, parsed.p, parsed.q, &mut logs),
-        "ex2_surface" => run_ex2(&reed, parsed.dim, parsed.nelem, parsed.p, parsed.q, &mut logs),
-        "ex3_volume_combined" => {
-            run_ex3(&reed, parsed.dim, parsed.nelem, parsed.p, parsed.q, &mut logs)
-        }
-        "poisson" => run_poisson(&reed, parsed.dim, parsed.nelem, parsed.p, parsed.q, &mut logs),
+        "ex1_volume" => run_ex1(
+            &reed,
+            parsed.dim,
+            parsed.nelem,
+            parsed.p,
+            parsed.q,
+            &mut logs,
+        ),
+        "ex2_surface" => run_ex2(
+            &reed,
+            parsed.dim,
+            parsed.nelem,
+            parsed.p,
+            parsed.q,
+            &mut logs,
+        ),
+        "ex3_volume_combined" => run_ex3(
+            &reed,
+            parsed.dim,
+            parsed.nelem,
+            parsed.p,
+            parsed.q,
+            &mut logs,
+        ),
+        "poisson" => run_poisson(
+            &reed,
+            parsed.dim,
+            parsed.nelem,
+            parsed.p,
+            parsed.q,
+            &mut logs,
+        ),
         _ => Err(format!("unknown example: {}", parsed.example)),
     }
     .map_err(|e| JsValue::from_str(&e))?;
@@ -217,7 +257,11 @@ pub fn run_example(args: JsValue) -> Result<JsValue, JsValue> {
         q: parsed.q,
         logs,
         value,
-        expected: if expected == 0.0 { None } else { Some(expected) },
+        expected: if expected == 0.0 {
+            None
+        } else {
+            Some(expected)
+        },
         error: if error == 0.0 { None } else { Some(error) },
         duration_ms: t1 - t0,
     };
@@ -393,7 +437,9 @@ fn run_ex1(
         .field("qdata", Some(&*r_q), None, FieldVector::Active)
         .build()
         .map_err(|e| e.to_string())?;
-    op_build.apply(&*x, &mut *qdata).map_err(|e| e.to_string())?;
+    op_build
+        .apply(&*x, &mut *qdata)
+        .map_err(|e| e.to_string())?;
 
     let u = reed
         .vector_from_slice(&vec![1.0_f64; ndofs])
@@ -544,7 +590,9 @@ fn run_ex2(
         .field("qdata", Some(&*r_q), None, FieldVector::Active)
         .build()
         .map_err(|e| e.to_string())?;
-    op_build.apply(&*x, &mut *qdata).map_err(|e| e.to_string())?;
+    op_build
+        .apply(&*x, &mut *qdata)
+        .map_err(|e| e.to_string())?;
 
     let mut u_vals = vec![0.0_f64; ndofs];
     for c in comps.iter().take(dim) {
@@ -552,9 +600,7 @@ fn run_ex2(
             u_vals[i] += c[i];
         }
     }
-    let u = reed
-        .vector_from_slice(&u_vals)
-        .map_err(|e| e.to_string())?;
+    let u = reed.vector_from_slice(&u_vals).map_err(|e| e.to_string())?;
     let mut v = reed.vector(ndofs).map_err(|e| e.to_string())?;
     v.set_value(0.0).map_err(|e| e.to_string())?;
 
@@ -722,7 +768,12 @@ fn run_ex3(
                 .map_err(|e| e.to_string())?,
         )
         .field("u", Some(&*r_u), Some(&*b_u), FieldVector::Active)
-        .field("qdata", Some(&*r_q_mass), None, FieldVector::Passive(&*qdata_mass))
+        .field(
+            "qdata",
+            Some(&*r_q_mass),
+            None,
+            FieldVector::Passive(&*qdata_mass),
+        )
         .field("v", Some(&*r_u), Some(&*b_u), FieldVector::Active)
         .build()
         .map_err(|e| e.to_string())?;
@@ -741,7 +792,12 @@ fn run_ex3(
                 .map_err(|e| e.to_string())?,
         )
         .field("du", Some(&*r_u), Some(&*b_u), FieldVector::Active)
-        .field("qdata", Some(&*r_q_poisson), None, FieldVector::Passive(&*qdata_poisson))
+        .field(
+            "qdata",
+            Some(&*r_q_poisson),
+            None,
+            FieldVector::Passive(&*qdata_poisson),
+        )
         .field("dv", Some(&*r_u), Some(&*b_u), FieldVector::Active)
         .build()
         .map_err(|e| e.to_string())?;
@@ -884,7 +940,9 @@ fn run_poisson(
         .field("qdata", Some(&*r_q), None, FieldVector::Active)
         .build()
         .map_err(|e| e.to_string())?;
-    op_build.apply(&*x, &mut *qdata).map_err(|e| e.to_string())?;
+    op_build
+        .apply(&*x, &mut *qdata)
+        .map_err(|e| e.to_string())?;
 
     let mut u_vals = vec![0.0_f64; ndofs];
     for c in comps.iter().take(dim) {
@@ -892,9 +950,7 @@ fn run_poisson(
             u_vals[i] += c[i];
         }
     }
-    let u = reed
-        .vector_from_slice(&u_vals)
-        .map_err(|e| e.to_string())?;
+    let u = reed.vector_from_slice(&u_vals).map_err(|e| e.to_string())?;
     let mut v = reed.vector(ndofs).map_err(|e| e.to_string())?;
     v.set_value(0.0).map_err(|e| e.to_string())?;
 

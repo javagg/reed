@@ -4,7 +4,6 @@
 /// - 1D: 2
 /// - 2D: 8
 /// - 3D: 24
-
 use reed::{FieldVector, OperatorTrait, QuadMode, Reed};
 use std::env;
 
@@ -204,7 +203,11 @@ fn run_surface(
     let mut qdata = reed.vector(nelem * qpts_per_elem * qdata_comp)?;
     qdata.set_value(0.0)?;
 
-    let qf_build = if dim == 2 { "Poisson2DBuild" } else { "Poisson3DBuild" };
+    let qf_build = if dim == 2 {
+        "Poisson2DBuild"
+    } else {
+        "Poisson3DBuild"
+    };
     let op_build = reed
         .operator_builder()
         .qfunction(reed.q_function_by_name(qf_build)?)
@@ -224,7 +227,11 @@ fn run_surface(
     let mut v = reed.vector(ndofs)?;
     v.set_value(0.0)?;
 
-    let qf_apply = if dim == 2 { "Poisson2DApply" } else { "Poisson3DApply" };
+    let qf_apply = if dim == 2 {
+        "Poisson2DApply"
+    } else {
+        "Poisson3DApply"
+    };
     let op_diff = reed
         .operator_builder()
         .qfunction(reed.q_function_by_name(qf_apply)?)
@@ -295,7 +302,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     if study {
         println!("ex2_surface convergence study (dim={dim}, p={p}, q={q})");
-        println!("{:>8} {:>18} {:>12} {:>12}", "nelem", "error", "rate", "tol");
+        println!(
+            "{:>8} {:>18} {:>12} {:>12}",
+            "nelem", "error", "rate", "tol"
+        );
 
         let mut prev_error: Option<f64> = None;
         for level in 0..levels {
@@ -311,7 +321,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "-".to_string()
             };
 
-            println!("{:>8} {:>18.10e} {:>12} {:>12.4e}", nelem_level, error, rate_str, tol);
+            println!(
+                "{:>8} {:>18.10e} {:>12} {:>12.4e}",
+                nelem_level, error, rate_str, tol
+            );
             prev_error = Some(error);
         }
         Ok(())

@@ -73,7 +73,9 @@ impl<T: Scalar> QFunctionTrait<T> for Identity {
         }
         let n = q * self.inputs[0].num_comp;
         if u.len() != n {
-            return Err(ReedError::QFunction("Identity: unexpected buffer length".into()));
+            return Err(ReedError::QFunction(
+                "Identity: unexpected buffer length".into(),
+            ));
         }
         v.copy_from_slice(u);
         Ok(())

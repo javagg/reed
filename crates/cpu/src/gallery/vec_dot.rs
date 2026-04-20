@@ -134,9 +134,7 @@ impl<T: Scalar> QFunctionTrait<T> for Vec3Dot {
         let v = inputs[1];
         let w = &mut outputs[0];
         for i in 0..q {
-            w[i] = u[i * 3] * v[i * 3]
-                + u[i * 3 + 1] * v[i * 3 + 1]
-                + u[i * 3 + 2] * v[i * 3 + 2];
+            w[i] = u[i * 3] * v[i * 3] + u[i * 3 + 1] * v[i * 3 + 1] + u[i * 3 + 2] * v[i * 3 + 2];
         }
         Ok(())
     }

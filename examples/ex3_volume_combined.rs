@@ -2,7 +2,6 @@
 ///
 /// 演示组合算子作用：v = (M + K)u。
 /// 对于常量 u=1，扩散项 K 贡献应为 0，结果退化为质量积分。
-
 use reed::{FieldVector, OperatorTrait, QuadMode, Reed};
 use std::env;
 
@@ -94,7 +93,12 @@ fn build_coords_components(dim: usize, ndofs_1d: usize) -> Vec<Vec<f64>> {
     comps
 }
 
-fn run_combined(dim: usize, nelem_1d: usize, p: usize, q: usize) -> Result<(), Box<dyn std::error::Error>> {
+fn run_combined(
+    dim: usize,
+    nelem_1d: usize,
+    p: usize,
+    q: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
     let reed = Reed::<f64>::init("/cpu/self")?;
 
     let ndofs_1d = nelem_1d * (p - 1) + 1;
@@ -115,8 +119,18 @@ fn run_combined(dim: usize, nelem_1d: usize, p: usize, q: usize) -> Result<(), B
 
     let (qf_mass_build, qf_poisson_build_opt, qf_poisson_apply, exact) = match dim {
         1 => ("Mass1DBuild", None, "Poisson1DApply", 2.0_f64),
-        2 => ("Mass2DBuild", Some("Poisson2DBuild"), "Poisson2DApply", 4.0_f64),
-        3 => ("Mass3DBuild", Some("Poisson3DBuild"), "Poisson3DApply", 8.0_f64),
+        2 => (
+            "Mass2DBuild",
+            Some("Poisson2DBuild"),
+            "Poisson2DApply",
+            4.0_f64,
+        ),
+        3 => (
+            "Mass3DBuild",
+            Some("Poisson3DBuild"),
+            "Poisson3DApply",
+            8.0_f64,
+        ),
         _ => unreachable!(),
     };
 
@@ -193,7 +207,12 @@ fn run_combined(dim: usize, nelem_1d: usize, p: usize, q: usize) -> Result<(), B
         .operator_builder()
         .qfunction(reed.q_function_by_name("MassApply")?)
         .field("u", Some(&*r_u), Some(&*b_u), FieldVector::Active)
-        .field("qdata", Some(&*r_q_mass), None, FieldVector::Passive(&*qdata_mass))
+        .field(
+            "qdata",
+            Some(&*r_q_mass),
+            None,
+            FieldVector::Passive(&*qdata_mass),
+        )
         .field("v", Some(&*r_u), Some(&*b_u), FieldVector::Active)
         .build()?;
 
@@ -201,7 +220,12 @@ fn run_combined(dim: usize, nelem_1d: usize, p: usize, q: usize) -> Result<(), B
         .operator_builder()
         .qfunction(reed.q_function_by_name(qf_poisson_apply)?)
         .field("du", Some(&*r_u), Some(&*b_u), FieldVector::Active)
-        .field("qdata", Some(&*r_q_poisson), None, FieldVector::Passive(&*qdata_poisson))
+        .field(
+            "qdata",
+            Some(&*r_q_poisson),
+            None,
+            FieldVector::Passive(&*qdata_poisson),
+        )
         .field("dv", Some(&*r_u), Some(&*b_u), FieldVector::Active)
         .build()?;
 
@@ -222,7 +246,11 @@ fn run_combined(dim: usize, nelem_1d: usize, p: usize, q: usize) -> Result<(), B
     println!("Computed value : {:.12}", computed);
     println!("Error          : {:.12e}", error);
 
-    let tol = if dim == 1 { 2.0e3 * f64::EPSILON } else { 1.0e-8 };
+    let tol = if dim == 1 {
+        2.0e3 * f64::EPSILON
+    } else {
+        1.0e-8
+    };
     if error > tol {
         return Err(format!("error too large: {:.3e} > tol {:.3e}", error, tol).into());
     }

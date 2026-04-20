@@ -200,8 +200,7 @@ impl<T: Scalar> QFunctionTrait<T> for Mass3DBuild {
             let j21 = dx[i * 9 + 7];
             let j22 = dx[i * 9 + 8];
 
-            let det_j = j00 * (j11 * j22 - j12 * j21)
-                - j01 * (j10 * j22 - j12 * j20)
+            let det_j = j00 * (j11 * j22 - j12 * j21) - j01 * (j10 * j22 - j12 * j20)
                 + j02 * (j10 * j21 - j11 * j20);
             qdata[i] = det_j.abs() * weights[i];
         }

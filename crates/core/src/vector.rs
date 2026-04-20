@@ -4,7 +4,9 @@ use crate::{enums::NormType, error::ReedResult, scalar::Scalar};
 #[cfg(not(target_arch = "wasm32"))]
 pub trait VectorTrait<T: Scalar>: Send + Sync {
     fn len(&self) -> usize;
-    fn is_empty(&self) -> bool { self.len() == 0 }
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
     fn copy_from_slice(&mut self, data: &[T]) -> ReedResult<()>;
     fn copy_to_slice(&self, data: &mut [T]) -> ReedResult<()>;
     fn set_value(&mut self, val: T) -> ReedResult<()>;
@@ -18,7 +20,9 @@ pub trait VectorTrait<T: Scalar>: Send + Sync {
 #[cfg(target_arch = "wasm32")]
 pub trait VectorTrait<T: Scalar> {
     fn len(&self) -> usize;
-    fn is_empty(&self) -> bool { self.len() == 0 }
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
     fn copy_from_slice(&mut self, data: &[T]) -> ReedResult<()>;
     fn copy_to_slice(&self, data: &mut [T]) -> ReedResult<()>;
     fn set_value(&mut self, val: T) -> ReedResult<()>;

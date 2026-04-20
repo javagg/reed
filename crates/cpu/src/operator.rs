@@ -191,7 +191,10 @@ impl<'a, T: Scalar> CpuOperator<'a, T> {
             .ok_or_else(|| ReedError::Operator(format!("field '{}' not found", name)))
     }
 
-    fn qpoint_component_count(field: &OperatorField<'a, T>, eval_mode: EvalMode) -> ReedResult<usize> {
+    fn qpoint_component_count(
+        field: &OperatorField<'a, T>,
+        eval_mode: EvalMode,
+    ) -> ReedResult<usize> {
         match eval_mode {
             EvalMode::None => {
                 if let Some(restriction) = field.restriction {
@@ -204,14 +207,15 @@ impl<'a, T: Scalar> CpuOperator<'a, T> {
                 }
             }
             EvalMode::Weight => Ok(1),
-            EvalMode::Interp => field
-                .basis
-                .map(|basis| basis.num_comp())
-                .ok_or_else(|| ReedError::Operator(format!("field '{}' requires basis", field.name))),
+            EvalMode::Interp => field.basis.map(|basis| basis.num_comp()).ok_or_else(|| {
+                ReedError::Operator(format!("field '{}' requires basis", field.name))
+            }),
             EvalMode::Grad => field
                 .basis
                 .map(|basis| basis.num_comp() * basis.dim())
-                .ok_or_else(|| ReedError::Operator(format!("field '{}' requires basis", field.name))),
+                .ok_or_else(|| {
+                    ReedError::Operator(format!("field '{}' requires basis", field.name))
+                }),
             EvalMode::Div => {
                 let basis = field.basis.ok_or_else(|| {
                     ReedError::Operator(format!("field '{}' requires basis for Div", field.name))
@@ -357,10 +361,16 @@ impl<'a, T: Scalar> CpuOperator<'a, T> {
 
         // Allocate workspace buffers on each call to avoid Mutex overhead
         // The allocation cost is negligible compared to the compute work
-        let mut q_inputs: Vec<Vec<T>> = (0..self.num_qfunction_inputs).map(|_| Vec::new()).collect();
-        let mut q_outputs: Vec<Vec<T>> = (0..self.num_qfunction_outputs).map(|_| Vec::new()).collect();
-        let mut input_locals: Vec<Vec<T>> = (0..self.num_qfunction_inputs).map(|_| Vec::new()).collect();
-        let mut output_locals: Vec<Vec<T>> = (0..self.num_qfunction_outputs).map(|_| Vec::new()).collect();
+        let mut q_inputs: Vec<Vec<T>> =
+            (0..self.num_qfunction_inputs).map(|_| Vec::new()).collect();
+        let mut q_outputs: Vec<Vec<T>> = (0..self.num_qfunction_outputs)
+            .map(|_| Vec::new())
+            .collect();
+        let mut input_locals: Vec<Vec<T>> =
+            (0..self.num_qfunction_inputs).map(|_| Vec::new()).collect();
+        let mut output_locals: Vec<Vec<T>> = (0..self.num_qfunction_outputs)
+            .map(|_| Vec::new())
+            .collect();
 
         for (slot, plan) in self.input_plans.iter().enumerate() {
             let field = &self.fields[plan.field_index];
@@ -381,7 +391,10 @@ impl<'a, T: Scalar> CpuOperator<'a, T> {
         }
 
         let input_slices = q_inputs.iter().map(Vec::as_slice).collect::<Vec<_>>();
-        let mut output_slices = q_outputs.iter_mut().map(Vec::as_mut_slice).collect::<Vec<_>>();
+        let mut output_slices = q_outputs
+            .iter_mut()
+            .map(Vec::as_mut_slice)
+            .collect::<Vec<_>>();
         self.qfunction.apply(
             self.qfunction_context.as_bytes(),
             self.num_elem * self.num_qpoints,

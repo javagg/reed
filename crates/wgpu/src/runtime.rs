@@ -48,7 +48,8 @@ impl GpuRuntime {
                 force_fallback_adapter: force_fallback,
                 compatible_surface: None,
             })
-            .await else {
+            .await
+        else {
             return None;
         };
 
@@ -257,11 +258,10 @@ impl GpuRuntime {
         });
         let shader_scatter = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("reed-restriction-scatter"),
-            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(
-                RESTRICTION_SCATTER_WGSL,
-            )),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(RESTRICTION_SCATTER_WGSL)),
         });
-        let set_pipeline = create_pipeline_with_module(&device, &set_layout, &shader_main, "set_main");
+        let set_pipeline =
+            create_pipeline_with_module(&device, &set_layout, &shader_main, "set_main");
         let scale_pipeline =
             create_pipeline_with_module(&device, &scale_layout, &shader_main, "scale_main");
         let axpy_pipeline =
@@ -303,42 +303,41 @@ impl GpuRuntime {
             "basis_grad_transpose_main",
         );
 
-        let basis_post_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("reed-basis-post-layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: true },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
+        let basis_post_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("reed-basis-post-layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Storage { read_only: false },
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                ],
-            });
+                    count: None,
+                },
+            ],
+        });
         let basis_post_pipeline = create_pipeline_with_module(
             &device,
             &basis_post_layout,

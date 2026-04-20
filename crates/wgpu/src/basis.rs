@@ -2,11 +2,10 @@ use std::{any::TypeId, sync::Arc};
 
 use num_traits::NumCast;
 use reed_core::{
-    BasisTrait,
     enums::{EvalMode, QuadMode},
     error::ReedResult,
     scalar::Scalar,
-    ReedError,
+    BasisTrait, ReedError,
 };
 use reed_cpu::basis_lagrange::LagrangeBasis;
 use wgpu::util::DeviceExt;
@@ -93,19 +92,22 @@ impl<T: Scalar> WgpuBasis<T> {
             )));
         }
 
-        let Some(u_f32) = u.iter().map(|x| NumCast::from(*x)).collect::<Option<Vec<f32>>>() else {
+        let Some(u_f32) = u
+            .iter()
+            .map(|x| NumCast::from(*x))
+            .collect::<Option<Vec<f32>>>()
+        else {
             return Ok(false);
         };
         let mut v_f32 = vec![0.0_f32; out_size];
 
-        let mat_buffer =
-            runtime
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("wgpu-basis-interp-mat"),
-                    contents: bytemuck::cast_slice(interp),
-                    usage: wgpu::BufferUsages::STORAGE,
-                });
+        let mat_buffer = runtime
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("wgpu-basis-interp-mat"),
+                contents: bytemuck::cast_slice(interp),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
         let u_buffer = runtime
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -141,28 +143,30 @@ impl<T: Scalar> WgpuBasis<T> {
                 usage: wgpu::BufferUsages::UNIFORM,
             });
 
-        let bind = runtime.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("wgpu-basis-interp-bind"),
-            layout: runtime.basis_interp_layout(),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: mat_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: u_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: v_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: p_buffer.as_entire_binding(),
-                },
-            ],
-        });
+        let bind = runtime
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("wgpu-basis-interp-bind"),
+                layout: runtime.basis_interp_layout(),
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: mat_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: u_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: v_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: p_buffer.as_entire_binding(),
+                    },
+                ],
+            });
 
         let readback = runtime.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("wgpu-basis-interp-readback"),
@@ -202,8 +206,9 @@ impl<T: Scalar> WgpuBasis<T> {
 
         map_readback_f32(&runtime.device, &readback, &mut v_f32)?;
         for (dst, src) in v.iter_mut().zip(v_f32.iter()) {
-            *dst = NumCast::from(*src)
-                .ok_or_else(|| ReedError::Basis("f32->T conversion failed during readback".into()))?;
+            *dst = NumCast::from(*src).ok_or_else(|| {
+                ReedError::Basis("f32->T conversion failed during readback".into())
+            })?;
         }
         Ok(true)
     }
@@ -249,19 +254,22 @@ impl<T: Scalar> WgpuBasis<T> {
             )));
         }
 
-        let Some(u_f32) = u.iter().map(|x| NumCast::from(*x)).collect::<Option<Vec<f32>>>() else {
+        let Some(u_f32) = u
+            .iter()
+            .map(|x| NumCast::from(*x))
+            .collect::<Option<Vec<f32>>>()
+        else {
             return Ok(false);
         };
         let mut v_f32 = vec![0.0_f32; out_size];
 
-        let mat_buffer =
-            runtime
-                .device
-                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("wgpu-basis-grad-mat"),
-                    contents: bytemuck::cast_slice(grad),
-                    usage: wgpu::BufferUsages::STORAGE,
-                });
+        let mat_buffer = runtime
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("wgpu-basis-grad-mat"),
+                contents: bytemuck::cast_slice(grad),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
         let u_buffer = runtime
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -297,28 +305,30 @@ impl<T: Scalar> WgpuBasis<T> {
                 usage: wgpu::BufferUsages::UNIFORM,
             });
 
-        let bind = runtime.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("wgpu-basis-grad-bind"),
-            layout: runtime.basis_interp_layout(),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: mat_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: u_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: v_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: p_buffer.as_entire_binding(),
-                },
-            ],
-        });
+        let bind = runtime
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("wgpu-basis-grad-bind"),
+                layout: runtime.basis_interp_layout(),
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: mat_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: u_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: v_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: p_buffer.as_entire_binding(),
+                    },
+                ],
+            });
 
         let readback = runtime.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("wgpu-basis-grad-readback"),
@@ -358,8 +368,9 @@ impl<T: Scalar> WgpuBasis<T> {
 
         map_readback_f32(&runtime.device, &readback, &mut v_f32)?;
         for (dst, src) in v.iter_mut().zip(v_f32.iter()) {
-            *dst = NumCast::from(*src)
-                .ok_or_else(|| ReedError::Basis("f32->T conversion failed during readback".into()))?;
+            *dst = NumCast::from(*src).ok_or_else(|| {
+                ReedError::Basis("f32->T conversion failed during readback".into())
+            })?;
         }
         Ok(true)
     }
@@ -410,43 +421,49 @@ impl<T: Scalar> WgpuBasis<T> {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let post_p = runtime.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("wgpu-prep-post-u"),
-            contents: bytemuck::cast_slice(&Self::basis_post_words(
-                prep_mode,
-                num_elem,
-                num_qpoints,
-                dim,
-                ncomp,
-                qcomp,
-                prep_threads,
-            )),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let post_bind = runtime.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("wgpu-prep-post-bind"),
-            layout: runtime.basis_post_layout(),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: prep_in.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: grad_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: post_p.as_entire_binding(),
-                },
-            ],
-        });
+        let post_p = runtime
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("wgpu-prep-post-u"),
+                contents: bytemuck::cast_slice(&Self::basis_post_words(
+                    prep_mode,
+                    num_elem,
+                    num_qpoints,
+                    dim,
+                    ncomp,
+                    qcomp,
+                    prep_threads,
+                )),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+        let post_bind = runtime
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("wgpu-prep-post-bind"),
+                layout: runtime.basis_post_layout(),
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: prep_in.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: grad_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: post_p.as_entire_binding(),
+                    },
+                ],
+            });
 
-        let mat_buffer = runtime.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("wgpu-prep-grad-t-mat"),
-            contents: bytemuck::cast_slice(grad_mat),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+        let mat_buffer = runtime
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("wgpu-prep-grad-t-mat"),
+                contents: bytemuck::cast_slice(grad_mat),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
         let v_buffer = runtime.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("wgpu-prep-grad-t-v"),
             size: (out_dof * std::mem::size_of::<f32>()) as u64,
@@ -455,42 +472,46 @@ impl<T: Scalar> WgpuBasis<T> {
                 | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let gp_buf = runtime.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("wgpu-prep-grad-t-params"),
-            contents: bytemuck::cast_slice(&[
-                num_elem as u32,
-                num_dof as u32,
-                num_qpoints as u32,
-                ncomp as u32,
-                out_dof as u32,
-                dim as u32,
-                0,
-                0,
-            ]),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let grad_bind = runtime.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("wgpu-prep-grad-t-bind"),
-            layout: runtime.basis_interp_layout(),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: mat_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: grad_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: v_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: gp_buf.as_entire_binding(),
-                },
-            ],
-        });
+        let gp_buf = runtime
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("wgpu-prep-grad-t-params"),
+                contents: bytemuck::cast_slice(&[
+                    num_elem as u32,
+                    num_dof as u32,
+                    num_qpoints as u32,
+                    ncomp as u32,
+                    out_dof as u32,
+                    dim as u32,
+                    0,
+                    0,
+                ]),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+        let grad_bind = runtime
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("wgpu-prep-grad-t-bind"),
+                layout: runtime.basis_interp_layout(),
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: mat_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: grad_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: v_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: gp_buf.as_entire_binding(),
+                    },
+                ],
+            });
 
         let readback = runtime.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("wgpu-prep-grad-t-rb"),
@@ -573,14 +594,20 @@ impl<T: Scalar> WgpuBasis<T> {
                     out_size
                 )));
             }
-            let Some(u_f32) = u.iter().map(|x| NumCast::from(*x)).collect::<Option<Vec<f32>>>() else {
+            let Some(u_f32) = u
+                .iter()
+                .map(|x| NumCast::from(*x))
+                .collect::<Option<Vec<f32>>>()
+            else {
                 return Ok(false);
             };
-            let w_buffer = runtime.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("wgpu-div-t-w"),
-                contents: bytemuck::cast_slice(&u_f32),
-                usage: wgpu::BufferUsages::STORAGE,
-            });
+            let w_buffer = runtime
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("wgpu-div-t-w"),
+                    contents: bytemuck::cast_slice(&u_f32),
+                    usage: wgpu::BufferUsages::STORAGE,
+                });
             let v_f32 = self.gpu_prep_then_grad_transpose(
                 runtime,
                 grad,
@@ -595,7 +622,9 @@ impl<T: Scalar> WgpuBasis<T> {
             )?;
             for (dst, src) in v.iter_mut().zip(v_f32.iter()) {
                 *dst = NumCast::from(*src).ok_or_else(|| {
-                    ReedError::Basis("f32->T conversion failed during div transpose readback".into())
+                    ReedError::Basis(
+                        "f32->T conversion failed during div transpose readback".into(),
+                    )
                 })?;
             }
             return Ok(true);
@@ -613,22 +642,30 @@ impl<T: Scalar> WgpuBasis<T> {
                 div_len
             )));
         }
-        let Some(u_f32) = u.iter().map(|x| NumCast::from(*x)).collect::<Option<Vec<f32>>>() else {
+        let Some(u_f32) = u
+            .iter()
+            .map(|x| NumCast::from(*x))
+            .collect::<Option<Vec<f32>>>()
+        else {
             return Ok(false);
         };
         let grad_len = num_elem * num_qpoints * qcomp;
         let grad_out_sz = grad_len;
 
-        let mat_buffer = runtime.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("wgpu-div-f-grad-mat"),
-            contents: bytemuck::cast_slice(grad),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-        let u_buffer = runtime.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("wgpu-div-f-u"),
-            contents: bytemuck::cast_slice(&u_f32),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+        let mat_buffer = runtime
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("wgpu-div-f-grad-mat"),
+                contents: bytemuck::cast_slice(grad),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let u_buffer = runtime
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("wgpu-div-f-u"),
+                contents: bytemuck::cast_slice(&u_f32),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
         let grad_buffer = runtime.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("wgpu-div-f-grad"),
             size: (grad_len * std::mem::size_of::<f32>()) as u64,
@@ -645,33 +682,37 @@ impl<T: Scalar> WgpuBasis<T> {
             0,
             0,
         ];
-        let gp_buf = runtime.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("wgpu-div-f-grad-params"),
-            contents: bytemuck::cast_slice(&grad_params),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let grad_bind = runtime.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("wgpu-div-f-grad-bind"),
-            layout: runtime.basis_interp_layout(),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: mat_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: u_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: grad_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: gp_buf.as_entire_binding(),
-                },
-            ],
-        });
+        let gp_buf = runtime
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("wgpu-div-f-grad-params"),
+                contents: bytemuck::cast_slice(&grad_params),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+        let grad_bind = runtime
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("wgpu-div-f-grad-bind"),
+                layout: runtime.basis_interp_layout(),
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: mat_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: u_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: grad_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: gp_buf.as_entire_binding(),
+                    },
+                ],
+            });
 
         let div_buffer = runtime.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("wgpu-div-f-out"),
@@ -679,37 +720,41 @@ impl<T: Scalar> WgpuBasis<T> {
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
-        let post_p = runtime.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("wgpu-div-f-post-params"),
-            contents: bytemuck::cast_slice(&Self::basis_post_words(
-                0,
-                num_elem,
-                num_qpoints,
-                dim,
-                ncomp,
-                qcomp,
-                div_len,
-            )),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let post_bind = runtime.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("wgpu-div-f-post"),
-            layout: runtime.basis_post_layout(),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: grad_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: div_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: post_p.as_entire_binding(),
-                },
-            ],
-        });
+        let post_p = runtime
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("wgpu-div-f-post-params"),
+                contents: bytemuck::cast_slice(&Self::basis_post_words(
+                    0,
+                    num_elem,
+                    num_qpoints,
+                    dim,
+                    ncomp,
+                    qcomp,
+                    div_len,
+                )),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+        let post_bind = runtime
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("wgpu-div-f-post"),
+                layout: runtime.basis_post_layout(),
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: grad_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: div_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: post_p.as_entire_binding(),
+                    },
+                ],
+            });
 
         let mut v_f32 = vec![0.0_f32; div_len];
         let readback = runtime.device.create_buffer(&wgpu::BufferDescriptor {
@@ -813,14 +858,20 @@ impl<T: Scalar> WgpuBasis<T> {
                     out_size
                 )));
             }
-            let Some(u_f32) = u.iter().map(|x| NumCast::from(*x)).collect::<Option<Vec<f32>>>() else {
+            let Some(u_f32) = u
+                .iter()
+                .map(|x| NumCast::from(*x))
+                .collect::<Option<Vec<f32>>>()
+            else {
                 return Ok(false);
             };
-            let w_buffer = runtime.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("wgpu-curl2d-t-w"),
-                contents: bytemuck::cast_slice(&u_f32),
-                usage: wgpu::BufferUsages::STORAGE,
-            });
+            let w_buffer = runtime
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("wgpu-curl2d-t-w"),
+                    contents: bytemuck::cast_slice(&u_f32),
+                    usage: wgpu::BufferUsages::STORAGE,
+                });
             let v_f32 = self.gpu_prep_then_grad_transpose(
                 runtime,
                 grad,
@@ -835,7 +886,9 @@ impl<T: Scalar> WgpuBasis<T> {
             )?;
             for (dst, src) in v.iter_mut().zip(v_f32.iter()) {
                 *dst = NumCast::from(*src).ok_or_else(|| {
-                    ReedError::Basis("f32->T conversion failed during curl2d transpose readback".into())
+                    ReedError::Basis(
+                        "f32->T conversion failed during curl2d transpose readback".into(),
+                    )
                 })?;
             }
             return Ok(true);
@@ -850,101 +903,117 @@ impl<T: Scalar> WgpuBasis<T> {
                 v.len()
             )));
         }
-        let Some(u_f32) = u.iter().map(|x| NumCast::from(*x)).collect::<Option<Vec<f32>>>() else {
+        let Some(u_f32) = u
+            .iter()
+            .map(|x| NumCast::from(*x))
+            .collect::<Option<Vec<f32>>>()
+        else {
             return Ok(false);
         };
         let grad_len = num_elem * num_qpoints * qcomp;
         let grad_out_sz = grad_len;
 
-        let mat_buffer = runtime.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("wgpu-curl2d-f-mat"),
-            contents: bytemuck::cast_slice(grad),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-        let u_buffer = runtime.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("wgpu-curl2d-f-u"),
-            contents: bytemuck::cast_slice(&u_f32),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+        let mat_buffer = runtime
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("wgpu-curl2d-f-mat"),
+                contents: bytemuck::cast_slice(grad),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let u_buffer = runtime
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("wgpu-curl2d-f-u"),
+                contents: bytemuck::cast_slice(&u_f32),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
         let grad_buffer = runtime.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("wgpu-curl2d-f-grad"),
             size: (grad_len * std::mem::size_of::<f32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let gp_buf = runtime.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("wgpu-curl2d-f-gp"),
-            contents: bytemuck::cast_slice(&[
-                num_elem as u32,
-                num_dof as u32,
-                num_qpoints as u32,
-                ncomp as u32,
-                grad_out_sz as u32,
-                dim as u32,
-                0,
-                0,
-            ]),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let grad_bind = runtime.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("wgpu-curl2d-f-gb"),
-            layout: runtime.basis_interp_layout(),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: mat_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: u_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: grad_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: gp_buf.as_entire_binding(),
-                },
-            ],
-        });
+        let gp_buf = runtime
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("wgpu-curl2d-f-gp"),
+                contents: bytemuck::cast_slice(&[
+                    num_elem as u32,
+                    num_dof as u32,
+                    num_qpoints as u32,
+                    ncomp as u32,
+                    grad_out_sz as u32,
+                    dim as u32,
+                    0,
+                    0,
+                ]),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+        let grad_bind = runtime
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("wgpu-curl2d-f-gb"),
+                layout: runtime.basis_interp_layout(),
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: mat_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: u_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: grad_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: gp_buf.as_entire_binding(),
+                    },
+                ],
+            });
         let curl_buffer = runtime.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("wgpu-curl2d-f-out"),
             size: (curl_len * std::mem::size_of::<f32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
-        let post_p = runtime.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("wgpu-curl2d-f-post"),
-            contents: bytemuck::cast_slice(&Self::basis_post_words(
-                2,
-                num_elem,
-                num_qpoints,
-                dim,
-                ncomp,
-                qcomp,
-                curl_len,
-            )),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let post_bind = runtime.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("wgpu-curl2d-f-pb"),
-            layout: runtime.basis_post_layout(),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: grad_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: curl_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: post_p.as_entire_binding(),
-                },
-            ],
-        });
+        let post_p = runtime
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("wgpu-curl2d-f-post"),
+                contents: bytemuck::cast_slice(&Self::basis_post_words(
+                    2,
+                    num_elem,
+                    num_qpoints,
+                    dim,
+                    ncomp,
+                    qcomp,
+                    curl_len,
+                )),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+        let post_bind = runtime
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("wgpu-curl2d-f-pb"),
+                layout: runtime.basis_post_layout(),
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: grad_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: curl_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: post_p.as_entire_binding(),
+                    },
+                ],
+            });
         let mut v_f32 = vec![0.0_f32; curl_len];
         let readback = runtime.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("wgpu-curl2d-f-rb"),
@@ -1025,14 +1094,20 @@ impl<T: Scalar> WgpuBasis<T> {
                     out_size
                 )));
             }
-            let Some(u_f32) = u.iter().map(|x| NumCast::from(*x)).collect::<Option<Vec<f32>>>() else {
+            let Some(u_f32) = u
+                .iter()
+                .map(|x| NumCast::from(*x))
+                .collect::<Option<Vec<f32>>>()
+            else {
                 return Ok(false);
             };
-            let w_buffer = runtime.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("wgpu-curl3d-t-w"),
-                contents: bytemuck::cast_slice(&u_f32),
-                usage: wgpu::BufferUsages::STORAGE,
-            });
+            let w_buffer = runtime
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("wgpu-curl3d-t-w"),
+                    contents: bytemuck::cast_slice(&u_f32),
+                    usage: wgpu::BufferUsages::STORAGE,
+                });
             let v_f32 = self.gpu_prep_then_grad_transpose(
                 runtime,
                 grad,
@@ -1047,7 +1122,9 @@ impl<T: Scalar> WgpuBasis<T> {
             )?;
             for (dst, src) in v.iter_mut().zip(v_f32.iter()) {
                 *dst = NumCast::from(*src).ok_or_else(|| {
-                    ReedError::Basis("f32->T conversion failed during curl3d transpose readback".into())
+                    ReedError::Basis(
+                        "f32->T conversion failed during curl3d transpose readback".into(),
+                    )
                 })?;
             }
             return Ok(true);
@@ -1062,101 +1139,117 @@ impl<T: Scalar> WgpuBasis<T> {
                 v.len()
             )));
         }
-        let Some(u_f32) = u.iter().map(|x| NumCast::from(*x)).collect::<Option<Vec<f32>>>() else {
+        let Some(u_f32) = u
+            .iter()
+            .map(|x| NumCast::from(*x))
+            .collect::<Option<Vec<f32>>>()
+        else {
             return Ok(false);
         };
         let grad_len = num_elem * num_qpoints * qcomp;
         let grad_out_sz = grad_len;
 
-        let mat_buffer = runtime.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("wgpu-curl3d-f-mat"),
-            contents: bytemuck::cast_slice(grad),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
-        let u_buffer = runtime.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("wgpu-curl3d-f-u"),
-            contents: bytemuck::cast_slice(&u_f32),
-            usage: wgpu::BufferUsages::STORAGE,
-        });
+        let mat_buffer = runtime
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("wgpu-curl3d-f-mat"),
+                contents: bytemuck::cast_slice(grad),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
+        let u_buffer = runtime
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("wgpu-curl3d-f-u"),
+                contents: bytemuck::cast_slice(&u_f32),
+                usage: wgpu::BufferUsages::STORAGE,
+            });
         let grad_buffer = runtime.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("wgpu-curl3d-f-grad"),
             size: (grad_len * std::mem::size_of::<f32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let gp_buf = runtime.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("wgpu-curl3d-f-gp"),
-            contents: bytemuck::cast_slice(&[
-                num_elem as u32,
-                num_dof as u32,
-                num_qpoints as u32,
-                ncomp as u32,
-                grad_out_sz as u32,
-                dim as u32,
-                0,
-                0,
-            ]),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let grad_bind = runtime.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("wgpu-curl3d-f-gb"),
-            layout: runtime.basis_interp_layout(),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: mat_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: u_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: grad_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: gp_buf.as_entire_binding(),
-                },
-            ],
-        });
+        let gp_buf = runtime
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("wgpu-curl3d-f-gp"),
+                contents: bytemuck::cast_slice(&[
+                    num_elem as u32,
+                    num_dof as u32,
+                    num_qpoints as u32,
+                    ncomp as u32,
+                    grad_out_sz as u32,
+                    dim as u32,
+                    0,
+                    0,
+                ]),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+        let grad_bind = runtime
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("wgpu-curl3d-f-gb"),
+                layout: runtime.basis_interp_layout(),
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: mat_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: u_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: grad_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: gp_buf.as_entire_binding(),
+                    },
+                ],
+            });
         let curl_buffer = runtime.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("wgpu-curl3d-f-out"),
             size: (curl_len * std::mem::size_of::<f32>()) as u64,
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         });
-        let post_p = runtime.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("wgpu-curl3d-f-post"),
-            contents: bytemuck::cast_slice(&Self::basis_post_words(
-                4,
-                num_elem,
-                num_qpoints,
-                dim,
-                ncomp,
-                qcomp,
-                curl_len,
-            )),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let post_bind = runtime.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("wgpu-curl3d-f-pb"),
-            layout: runtime.basis_post_layout(),
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: grad_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: curl_buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: post_p.as_entire_binding(),
-                },
-            ],
-        });
+        let post_p = runtime
+            .device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("wgpu-curl3d-f-post"),
+                contents: bytemuck::cast_slice(&Self::basis_post_words(
+                    4,
+                    num_elem,
+                    num_qpoints,
+                    dim,
+                    ncomp,
+                    qcomp,
+                    curl_len,
+                )),
+                usage: wgpu::BufferUsages::UNIFORM,
+            });
+        let post_bind = runtime
+            .device
+            .create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("wgpu-curl3d-f-pb"),
+                layout: runtime.basis_post_layout(),
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: grad_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: curl_buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: post_p.as_entire_binding(),
+                    },
+                ],
+            });
         let mut v_f32 = vec![0.0_f32; curl_len];
         let readback = runtime.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("wgpu-curl3d-f-rb"),
@@ -1197,9 +1290,8 @@ impl<T: Scalar> WgpuBasis<T> {
         runtime.queue.submit(Some(encoder.finish()));
         map_readback_f32(&runtime.device, &readback, &mut v_f32)?;
         for (dst, src) in v.iter_mut().zip(v_f32.iter()) {
-            *dst = NumCast::from(*src).ok_or_else(|| {
-                ReedError::Basis("f32->T curl3d forward readback".into())
-            })?;
+            *dst = NumCast::from(*src)
+                .ok_or_else(|| ReedError::Basis("f32->T curl3d forward readback".into()))?;
         }
         Ok(true)
     }
@@ -1243,13 +1335,18 @@ impl<T: Scalar> BasisTrait<T> for WgpuBasis<T> {
         {
             return Ok(());
         }
-        if matches!(eval_mode, EvalMode::Div) && self.try_apply_div_gpu(num_elem, transpose, u, v)? {
+        if matches!(eval_mode, EvalMode::Div)
+            && self.try_apply_div_gpu(num_elem, transpose, u, v)?
+        {
             return Ok(());
         }
-        if matches!(eval_mode, EvalMode::Curl) && self.try_apply_curl_gpu(num_elem, transpose, u, v)? {
+        if matches!(eval_mode, EvalMode::Curl)
+            && self.try_apply_curl_gpu(num_elem, transpose, u, v)?
+        {
             return Ok(());
         }
-        self.cpu_fallback.apply(num_elem, transpose, eval_mode, u, v)
+        self.cpu_fallback
+            .apply(num_elem, transpose, eval_mode, u, v)
     }
 
     fn q_weights(&self) -> &[T] {
@@ -1261,7 +1358,12 @@ impl<T: Scalar> BasisTrait<T> for WgpuBasis<T> {
     }
 }
 
-fn build_interp_matrix_f32(dim: usize, p: usize, q: usize, qmode: QuadMode) -> ReedResult<Vec<f32>> {
+fn build_interp_matrix_f32(
+    dim: usize,
+    p: usize,
+    q: usize,
+    qmode: QuadMode,
+) -> ReedResult<Vec<f32>> {
     let probe = LagrangeBasis::<f32>::new(dim, 1, p, q, qmode)?;
     let num_dof = probe.num_dof();
     let num_qpoints = probe.num_qpoints();
