@@ -160,13 +160,14 @@ Reed 对应：
 | libCEED 能力 | Reed 状态 | 说明 |
 |---|---|---|
 | 用户自定义 interior qfunction | 已支持 | 通过闭包构造 |
-| 命名 gallery qfunction | 已支持 | 当前仅 CPU gallery 的有限集合 |
+| 命名 gallery qfunction | 已支持 | CPU gallery 有限集合；各核实现 `QFunctionTrait<T>`，`T: Scalar`（`f32` / `f64`） |
 | QFunction field 描述 | 已支持 | `QFunctionField { name, num_comp, eval_mode }` |
 | QFunction context | 已支持（MVP） | `QFunctionContext` + 算子执行时传入 `apply`；尚无设备侧同步 API |
 
 说明：
 
 - 与 libCEED 一样，context 为定长字节块；gallery 默认 `context_byte_len() == 0`。
+- **标量类型**：命名 gallery 与 `reed_cpu::q_function_by_name::<T>` / `Reed<T>::q_function_by_name` 对齐同一 `T`；算子中向量与 QFunction 标量须一致。独立调用工厂函数且无法推断 `T` 时需显式 `::<f32>` / `::<f64>`。
 - 闭包 / 自定义核里收到的 `ctx: &[u8]` 与 `QFunctionContext::as_bytes()` 布局相同；优先使用 `QFunctionContext::read_f64_le_bytes(ctx, offset)` 等（及对应的 `write_*_le_bytes`），与实例方法共享边界检查与错误信息；亦可自行 `from_le_bytes` 或拷入 `QFunctionContext::from_bytes` 再调用 `read_*_le`。
 
 ### 4.5 Operator
@@ -219,6 +220,7 @@ libCEED 内置 gallery 名称见上游 `gallery/ceed-gallery-list.h`（`CeedQFun
 
 说明：
 
+- **`Scale` / `Scale (scalar)`**：与 libCEED 相同，上下文仍为 **8 字节 `f64` 小端**；Reed 读入后按 `T` 转换再参与乘法（与双精度 libCEED 示例二进制兼容）。
 - **`Vector3Poisson2DApply`**：`qdata` 为 **4** 分量 / 点，与 Reed 已有 `Poisson2DApply` / `Poisson2DBuild` 一致；libCEED 注册为 **3** 对称分量，迁移时需注意打包格式。
 - **复合算子**：`CompositeOperator` 实现子算子之和的 `apply` / `apply_add` / `linear_assemble_diagonal`（与 libCEED 加法组合一致）；不含 libCEED 的其它组合模式（如嵌套网格专用 API）。
 

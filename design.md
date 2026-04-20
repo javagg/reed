@@ -530,7 +530,7 @@ impl<T: Scalar> Reed<T> {
 
     // ── QFunction 工厂 ───────────────────────────────────────────────────────
     // QFunction 由用户直接 impl QFunctionTrait，无需工厂方法。
-    // 标准内置算符（质量���Poisson 等）在 reed-cpu/src/gallery/ 中提供。
+    // 标准内置算符（质量、Poisson 等）在 reed-cpu/src/gallery/ 中提供。
 }
 ```
 
@@ -578,7 +578,7 @@ fn tensor_contract(B: &[T], u: &[T], v: &mut [T], Q: usize, P: usize, transpose:
 | `MassApply`   | 应用质量算符 | `u[1]`、`qdata[1]` | `v[1]` |
 | `Poisson1DApply` | 应用 1D Poisson 算符 | `du[1]`、`qdata[1]` | `dv[1]` |
 
-每个 Gallery QFunction 实现 `QFunctionTrait<f64>`，可通过 `Reed::q_function_by_name("Mass1DBuild")` 获取。
+每个 Gallery QFunction 对任意 `T: Scalar` 实现 `QFunctionTrait<T>`（`f32` / `f64`）。通过 `Reed::<T>::init(...)` 得到的上下文上调用 `reed.q_function_by_name("Mass1DBuild")` 即得到 `dyn QFunctionTrait<T>`；独立使用 `reed_cpu::q_function_by_name::<T>(...)` 时在无法推断 `T` 处需写类型参数。
 
 ---
 
@@ -604,17 +604,18 @@ let my_qf = reed.q_function_interior(
     }),
 )?;
 
-// 方式 B：结构体实现（推荐用于复杂 PDE 算符）
+// 方式 B：结构体实现（推荐用于复杂 PDE 算符；`Scalar` 来自 `reed` / `reed_core`）
+use reed::Scalar;
 struct MyQFunction;
-impl QFunctionTrait<f64> for MyQFunction {
+impl<T: Scalar> QFunctionTrait<T> for MyQFunction {
     fn inputs(&self) -> &[QFunctionField] { /* ... */ }
     fn outputs(&self) -> &[QFunctionField] { /* ... */ }
     fn apply(
         &self,
         _ctx: &[u8],
         q: usize,
-        inputs: &[&[f64]],
-        outputs: &mut [&mut [f64]],
+        inputs: &[&[T]],
+        outputs: &mut [&mut [T]],
     ) -> ReedResult<()> {
         // 物理算符实现
         Ok(())
