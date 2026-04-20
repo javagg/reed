@@ -1,3 +1,19 @@
+//! Root `reed` crate: [`Reed`] context, backend resource strings, and re-exports.
+//!
+//! # Resource strings (`Reed::init`, `parse_backend_request`)
+//!
+//! Path-like IDs describe **where execution happens** (host CPU, GPU, future ISA
+//! tiers such as AVX-512). Discrete PDE operators live here; algebraic solvers are
+//! outside this crate.
+//!
+//! Recommended host CPU entry points: `/cpu/self`, `/cpu/self/ref`.
+//! GPU: `/gpu/wgpu` (optional feature). **`/gpu/cuda`** and **`/gpu/hip`** are
+//! reserved resource IDs (parsed + reported); execution is not implemented yet.
+//!
+//! Reed is designed as a **discrete backend** (operators, bases, restrictions)
+//! for higher-level orchestration; resource strings describe execution hardware,
+//! not any particular consumer.
+
 pub use reed_core::{
     Backend, BasisTrait, ClosureQFunction, ElemRestrictionTrait, ElemTopology, EvalMode,
     OperatorTrait, QFunctionClosure, QFunctionField, QFunctionTrait, QuadMode, ReedError,
@@ -13,31 +29,22 @@ pub struct Reed<T: Scalar> {
     inner: reed_core::Reed<T>,
 }
 
-/// Canonical solver backend IDs shared across subprojects.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ExternalSolverBackend {
-    HypreRs,
-    PetscRs,
-    Mumps,
-    Mkl,
-}
-
-/// Backend request surface exposed by reed.
+/// Backend request surface exposed by reed (execution device / API only).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReedBackendRequest {
-    NativeLinger,
+    /// Default host CPU execution (`/cpu/self`, etc.).
+    CpuHost,
     GpuWgpu,
-    ExternalSolver(ExternalSolverBackend),
+    /// Reserved CUDA API route (`/gpu/cuda`); not implemented (placeholder).
+    GpuCuda,
+    /// Reserved HIP/ROCm API route (`/gpu/hip`); not implemented (placeholder).
+    GpuHip,
 }
 
 /// Compile-time/runtime capability snapshot for reed backend routing.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReedBackendCapabilities {
     pub gpu_wgpu: bool,
-    pub hypre_rs: bool,
-    pub petsc_rs: bool,
-    pub mumps: bool,
-    pub mkl: bool,
     pub wasm_target: bool,
 }
 
@@ -45,11 +52,6 @@ impl ReedBackendCapabilities {
     pub fn detect() -> Self {
         Self {
             gpu_wgpu: cfg!(feature = "wgpu-backend"),
-            // Solver backend execution currently routes through native linger.
-            hypre_rs: cfg!(feature = "hypre-rs"),
-            petsc_rs: cfg!(feature = "petsc-rs"),
-            mumps: cfg!(feature = "mumps"),
-            mkl: cfg!(feature = "mkl"),
             wasm_target: cfg!(target_arch = "wasm32"),
         }
     }
@@ -87,39 +89,23 @@ impl<T: Scalar> Reed<T> {
         Ok((reed, report))
     }
 
-    /// Parse a canonical backend/resource string into a backend request.
+    /// Parse a backend/resource string into a [`ReedBackendRequest`].
     ///
     /// Returns `None` when the resource is unknown.
     pub fn parse_backend_request(resource: &str) -> Option<ReedBackendRequest> {
         match resource {
-            "/cpu/self" | "/cpu/self/ref" | "/native/linger" => {
-                Some(ReedBackendRequest::NativeLinger)
-            }
+            "/cpu/self" | "/cpu/self/ref" => Some(ReedBackendRequest::CpuHost),
             "/gpu/wgpu" | "/gpu/wgpu/ref" => Some(ReedBackendRequest::GpuWgpu),
-            "/solver/hypre-rs" => Some(ReedBackendRequest::ExternalSolver(
-                ExternalSolverBackend::HypreRs,
-            )),
-            "/solver/petsc-rs" | "/solver/petsc-ffi" => Some(
-                ReedBackendRequest::ExternalSolver(ExternalSolverBackend::PetscRs),
-            ),
-            "/solver/mumps" => Some(ReedBackendRequest::ExternalSolver(
-                ExternalSolverBackend::Mumps,
-            )),
-            "/solver/mkl" => {
-                Some(ReedBackendRequest::ExternalSolver(ExternalSolverBackend::Mkl))
-            }
+            "/gpu/cuda" | "/gpu/cuda/ref" => Some(ReedBackendRequest::GpuCuda),
+            "/gpu/hip" | "/gpu/hip/ref" => Some(ReedBackendRequest::GpuHip),
             _ => None,
         }
     }
 
-    /// Initialize reed from canonical backend/resource strings.
+    /// Initialize reed from backend/resource strings (see module docs).
     ///
-    /// Accepted examples: `/native/linger`, `/gpu/wgpu`, `/solver/mkl`,
-    /// `/solver/petsc-rs`.
-    ///
-    /// Compatibility aliases like `/solver/mumps` and `/solver/mkl` are
-    /// normalized through backend selection and currently resolve to the native
-    /// linger/cpu execution path in reed.
+    /// Examples: `/cpu/self`, `/gpu/wgpu`. `/gpu/cuda` and `/gpu/hip` parse but
+    /// [`init`](Self::init) returns an error until those backends exist.
     pub fn init_with_backend_resource(
         resource: &str,
     ) -> ReedResult<(Self, ReedBackendSelectionReport)> {
@@ -130,34 +116,6 @@ impl<T: Scalar> Reed<T> {
 
     pub fn init(resource: &str) -> ReedResult<Self> {
         if matches!(resource, "/cpu/self" | "/cpu/self/ref") {
-            return Ok(Self {
-                inner: reed_core::Reed::from_backend(Arc::new(CpuBackend::<T>::new())),
-            });
-        }
-
-        #[cfg(feature = "hypre-rs")]
-        if resource == "/solver/hypre-rs" {
-            return Ok(Self {
-                inner: reed_core::Reed::from_backend(Arc::new(CpuBackend::<T>::new())),
-            });
-        }
-
-        #[cfg(feature = "petsc-rs")]
-        if resource == "/solver/petsc-rs" {
-            return Ok(Self {
-                inner: reed_core::Reed::from_backend(Arc::new(CpuBackend::<T>::new())),
-            });
-        }
-
-        #[cfg(feature = "mumps")]
-        if resource == "/solver/mumps" {
-            return Ok(Self {
-                inner: reed_core::Reed::from_backend(Arc::new(CpuBackend::<T>::new())),
-            });
-        }
-
-        #[cfg(feature = "mkl")]
-        if resource == "/solver/mkl" {
             return Ok(Self {
                 inner: reed_core::Reed::from_backend(Arc::new(CpuBackend::<T>::new())),
             });
@@ -174,6 +132,17 @@ impl<T: Scalar> Reed<T> {
         if matches!(resource, "/gpu/wgpu" | "/gpu/wgpu/ref") {
             return Err(ReedError::BackendNotSupported(
                 "wgpu backend is disabled; build with feature 'wgpu-backend'".into(),
+            ));
+        }
+
+        if matches!(resource, "/gpu/cuda" | "/gpu/cuda/ref") {
+            return Err(ReedError::BackendNotSupported(
+                "backend /gpu/cuda is not implemented yet (reserved placeholder)".into(),
+            ));
+        }
+        if matches!(resource, "/gpu/hip" | "/gpu/hip/ref") {
+            return Err(ReedError::BackendNotSupported(
+                "backend /gpu/hip is not implemented yet (reserved placeholder)".into(),
             ));
         }
 
@@ -278,11 +247,11 @@ fn resolve_backend_request(
     caps: ReedBackendCapabilities,
 ) -> ReedBackendSelectionReport {
     match requested {
-        None | Some(ReedBackendRequest::NativeLinger) => ReedBackendSelectionReport {
+        None | Some(ReedBackendRequest::CpuHost) => ReedBackendSelectionReport {
             requested,
             effective_resource: "/cpu/self".to_string(),
             capabilities: caps,
-            note: "No explicit external backend requested; using native linger/cpu path in reed.".to_string(),
+            note: "No GPU route requested; using default host CPU backend (/cpu/self).".to_string(),
         },
         Some(ReedBackendRequest::GpuWgpu) => {
             if caps.wasm_target {
@@ -290,7 +259,7 @@ fn resolve_backend_request(
                     requested,
                     effective_resource: "/cpu/self".to_string(),
                     capabilities: caps,
-                    note: "Requested gpu/wgpu on wasm32 target; using deterministic fallback to native linger/cpu path.".to_string(),
+                    note: "Requested gpu/wgpu on wasm32 target; using deterministic fallback to host CPU (/cpu/self).".to_string(),
                 }
             } else if caps.gpu_wgpu {
                 ReedBackendSelectionReport {
@@ -304,72 +273,22 @@ fn resolve_backend_request(
                     requested,
                     effective_resource: "/cpu/self".to_string(),
                     capabilities: caps,
-                    note: "Requested gpu/wgpu but feature wgpu-backend is disabled; using deterministic fallback to native linger/cpu path.".to_string(),
+                    note: "Requested gpu/wgpu but feature wgpu-backend is disabled; using deterministic fallback to host CPU (/cpu/self).".to_string(),
                 }
             }
         }
-        Some(ReedBackendRequest::ExternalSolver(backend)) => {
-            let (name, enabled, resource) = match backend {
-                ExternalSolverBackend::HypreRs => ("hypre-rs", caps.hypre_rs, "/solver/hypre-rs"),
-                ExternalSolverBackend::PetscRs => ("petsc-rs", caps.petsc_rs, "/solver/petsc-rs"),
-                ExternalSolverBackend::Mumps => ("mumps", caps.mumps, "/solver/mumps"),
-                ExternalSolverBackend::Mkl => ("mkl", caps.mkl, "/solver/mkl"),
-            };
-
-            let is_native_compat = matches!(backend, ExternalSolverBackend::Mumps | ExternalSolverBackend::Mkl);
-
-            if caps.wasm_target {
-                ReedBackendSelectionReport {
-                    requested,
-                    effective_resource: "/cpu/self".to_string(),
-                    capabilities: caps,
-                    note: format!(
-                        "Requested {} on wasm32 target; solver compatibility aliases deterministically fall back to native linger/cpu path.",
-                        name
-                    ),
-                }
-            } else if is_native_compat && enabled {
-                ReedBackendSelectionReport {
-                    requested,
-                    effective_resource: "/cpu/self".to_string(),
-                    capabilities: caps,
-                    note: format!(
-                        "Requested {}. Capability is enabled; reed treats {} as a compatibility alias and resolves it to the native linger/cpu path.",
-                        name, resource
-                    ),
-                }
-            } else if is_native_compat {
-                ReedBackendSelectionReport {
-                    requested,
-                    effective_resource: "/cpu/self".to_string(),
-                    capabilities: caps,
-                    note: format!(
-                        "Requested {}, but its compatibility flag is disabled; using deterministic native linger/cpu path.",
-                        name
-                    ),
-                }
-            } else if enabled {
-                ReedBackendSelectionReport {
-                    requested,
-                    effective_resource: resource.to_string(),
-                    capabilities: caps,
-                    note: format!(
-                        "Requested {}. Capability is enabled; reed uses {} as an executable placeholder route currently backed by CPU adapter until dedicated solver wiring lands.",
-                        name, resource
-                    ),
-                }
-            } else {
-                ReedBackendSelectionReport {
-                    requested,
-                    effective_resource: "/cpu/self".to_string(),
-                    capabilities: caps,
-                    note: format!(
-                        "Requested {}, but capability is disabled; using deterministic fallback to native linger/cpu path.",
-                        name
-                    ),
-                }
-            }
-        }
+        Some(ReedBackendRequest::GpuCuda) => ReedBackendSelectionReport {
+            requested,
+            effective_resource: "/gpu/cuda".to_string(),
+            capabilities: caps,
+            note: "Reserved /gpu/cuda backend; not implemented (placeholder).".to_string(),
+        },
+        Some(ReedBackendRequest::GpuHip) => ReedBackendSelectionReport {
+            requested,
+            effective_resource: "/gpu/hip".to_string(),
+            capabilities: caps,
+            note: "Reserved /gpu/hip backend; not implemented (placeholder).".to_string(),
+        },
     }
 }
 
@@ -378,7 +297,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn backend_report_defaults_to_native_cpu() {
+    fn backend_report_defaults_to_host_cpu() {
         let rep = Reed::<f64>::backend_selection_report(None);
         assert_eq!(rep.effective_resource, "/cpu/self");
     }
@@ -393,36 +312,40 @@ mod tests {
     }
 
     #[test]
-    fn backend_report_mkl_resolves_to_native_linger() {
-        let rep = Reed::<f64>::backend_selection_report(Some(ReedBackendRequest::ExternalSolver(
-            ExternalSolverBackend::Mkl,
-        )));
-        assert_eq!(rep.effective_resource, "/cpu/self");
-        assert!(rep.note.contains("mkl"));
-    }
-
-    #[test]
-    fn backend_report_mumps_resolves_to_native_linger() {
-        let rep = Reed::<f64>::backend_selection_report(Some(ReedBackendRequest::ExternalSolver(
-            ExternalSolverBackend::Mumps,
-        )));
-        assert_eq!(rep.effective_resource, "/cpu/self");
-        assert!(rep.note.contains("mumps"));
-    }
-
-    #[test]
     fn parse_backend_request_supports_canonical_paths() {
         assert_eq!(
-            Reed::<f64>::parse_backend_request("/native/linger"),
-            Some(ReedBackendRequest::NativeLinger)
+            Reed::<f64>::parse_backend_request("/cpu/self"),
+            Some(ReedBackendRequest::CpuHost)
         );
         assert_eq!(
-            Reed::<f64>::parse_backend_request("/solver/petsc-rs"),
-            Some(ReedBackendRequest::ExternalSolver(ExternalSolverBackend::PetscRs))
+            Reed::<f64>::parse_backend_request("/gpu/wgpu"),
+            Some(ReedBackendRequest::GpuWgpu)
         );
         assert_eq!(
-            Reed::<f64>::parse_backend_request("/solver/petsc-ffi"),
-            Some(ReedBackendRequest::ExternalSolver(ExternalSolverBackend::PetscRs))
+            Reed::<f64>::parse_backend_request("/gpu/cuda"),
+            Some(ReedBackendRequest::GpuCuda)
         );
+        assert_eq!(
+            Reed::<f64>::parse_backend_request("/gpu/hip"),
+            Some(ReedBackendRequest::GpuHip)
+        );
+        assert_eq!(Reed::<f64>::parse_backend_request("/unknown/resource"), None);
+    }
+
+    #[test]
+    fn backend_report_cuda_hip_placeholders_keep_effective_paths() {
+        let cuda = Reed::<f64>::backend_selection_report(Some(ReedBackendRequest::GpuCuda));
+        assert_eq!(cuda.effective_resource, "/gpu/cuda");
+        assert!(cuda.note.contains("placeholder"));
+
+        let hip = Reed::<f64>::backend_selection_report(Some(ReedBackendRequest::GpuHip));
+        assert_eq!(hip.effective_resource, "/gpu/hip");
+        assert!(hip.note.contains("placeholder"));
+    }
+
+    #[test]
+    fn init_cuda_hip_placeholders_error() {
+        assert!(Reed::<f64>::init("/gpu/cuda").is_err());
+        assert!(Reed::<f64>::init("/gpu/hip").is_err());
     }
 }

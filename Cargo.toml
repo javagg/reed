@@ -30,10 +30,6 @@ criterion = "0.5"
 default = ["parallel"]
 parallel = ["reed-cpu/parallel"]
 wgpu-backend = ["dep:reed-wgpu"]
-hypre-rs = []
-petsc-rs = []
-mumps = [] # compatibility flag for native linger-backed MUMPS-style routing
-mkl = []   # compatibility flag for native linger-backed MKL-style routing
 
 [profile.release]
 opt-level = 3

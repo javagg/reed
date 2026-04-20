@@ -12,6 +12,12 @@
 - libCEED 的 C API 对象模型，对应 Reed 的 Rust trait + struct 对象模型。
 - libCEED 的后端资源字符串，对应 Reed 的 `Reed::init(resource)` 与 `Backend` 实现。
 
+### 1.1 资源字符串语义（约定）
+
+- 资源路径表示 **执行位置与能力**：主机 CPU（`/cpu/…`）、GPU（`/gpu/…`）、将来可扩展为 ISA 档次（例如 `/cpu/x86/avx512`，具体以实现为准）。
+- Reed **不包含** Hypre、PETSc、MUMPS、MKL 等代数求解器的资源路由；线性/非线性求解在更上层选择。
+- `/gpu/cuda`、`/gpu/hip` 为保留占位符（可解析并出现在选型报告中）；具体执行后端未实现前，`init` 会返回错误。
+
 ## 2. 顶层对象映射
 
 | libCEED | Reed | 说明 |
