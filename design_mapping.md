@@ -207,7 +207,7 @@ libCEED 内置 gallery 名称见上游 `gallery/ceed-gallery-list.h`（`CeedQFun
 |---|---|---|
 | `Mass1DBuild` / `Mass2DBuild` / `Mass3DBuild` | 同名 | 质量矩阵积分数据 |
 | `MassApply` | 同名 | 标量质量作用 |
-| `Poisson1DApply` / `Poisson2DBuild` / `Poisson2DApply` / `Poisson3DBuild` / `Poisson3DApply` | 同名 | Poisson 路径 |
+| `Poisson1DBuild` / `Poisson1DApply` / `Poisson2DBuild` / `Poisson2DApply` / `Poisson3DBuild` / `Poisson3DApply` | 同名 | Poisson 路径（1D build：`qdata = w/J`） |
 | `Identity` | `Identity` | 插值场逐点拷贝（默认 1 分量；`Identity::with_components(n)` 用于多分量） |
 | `Identity to scalar` | `Identity to scalar` | 保留每点第一分量（默认输入 3 分量；`IdentityScalar::with_input_components(n)`） |
 | `Scale` | `Scale` | `output = alpha * input`，`alpha` 为 8 字节 `f64` LE 上下文 |
@@ -285,6 +285,31 @@ libCEED 内置 gallery 名称见上游 `gallery/ceed-gallery-list.h`（`CeedQFun
 5. **整数与索引约定**：评估将「尺寸」与「restriction 偏移」统一为与 libCEED 更接近的整型策略，降低 C 示例机械翻译成本。
 
 以上不改变当前 trait 语义；落地时逐项更新本文件 §4–§8 与 `readme.md`。
+
+### 8.2 迁移笔记：AtPoints、复合算子、整型（对照 libCEED 示例）
+
+**AtPoints 与边界/体积**
+
+| libCEED | Reed |
+|---|---|
+| `CeedElemRestrictionCreateAtPoints` | `Reed::elem_restriction_at_points(nelem, npoints_per_elem, ncomp, compstride, lsize, offsets)` |
+
+语义与 **offset 型** `elem_restriction` 相同，仅将「每单元局部点数」参数命名为 `npoints_per_elem` 以贴近上游命名。积分点布局仍由 `Basis` / 算子字段决定；表面离散、体积–边界耦合可参照 `examples/ex2_surface.rs` 与 libCEED surface 类示例对照迁移。
+
+**复合算子（加法型）**
+
+| libCEED | Reed |
+|---|---|
+| `CeedCompositeOperator` 将多个子算子 `apply` 相加 | `Reed::composite_operator(Vec<Box<dyn OperatorTrait<T>>>)` → `CompositeOperator`：`y = Σ_i A_i x`，`linear_assemble_diagonal` 为各子算子对角线之和 |
+
+注意：`Box<dyn OperatorTrait<T>>` 在 Rust 中默认带 **`'static`**。由 `OperatorBuilder` 得到的 `CpuOperator<'a, T>` 若含有对网格对象（restriction、basis）的借用，则 **不能** 直接装箱进 `composite_operator`；需在 **同一作用域** 内与网格对象共存并组合，或改用不借用的子算子。最小可运行演示见 **`examples/composite_operator.rs`**（纯代数缩放子算子）。
+
+**`CeedInt` 与尺寸**
+
+| 概念 | libCEED（C） | Reed（Rust） | 迁移 |
+|---|---|---|---|
+| 全局长度、单元数、`p`、`q` 等尺寸 | `CeedInt` | `usize` | C → Rust：`try_into()`；Rust → C：`as _`（注意范围） |
+| restriction 的 `offsets`、strided 的 stride | `CeedInt *` | `&[i32]` / `[i32; 3]` | 与 32 位索引缓冲区一一对应时可零拷贝共用 |
 
 ## 9. 后续维护建议
 

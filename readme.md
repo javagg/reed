@@ -7,7 +7,10 @@ cargo run --example ex1_volume
 cargo run --example ex2_surface
 cargo run --example ex3_volume_combined
 cargo run --example poisson
+cargo run --example composite_operator
 ```
+
+`composite_operator` 演示加法型 `CompositeOperator`（对照 libCEED `CeedCompositeOperator`）；详见 `design_mapping.md` §8.2。
 
 ### ex1_volume optional args
 
