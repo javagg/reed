@@ -717,6 +717,47 @@ fn test_qfunction_context_applies_in_closure() {
 }
 
 #[test]
+fn test_qfunction_context_f32_i32_roundtrip_in_closure() {
+    let reed = Reed::<f64>::init("/cpu/self").unwrap();
+    let mut ctx = QFunctionContext::new(8);
+    ctx.write_f32_le(0, 2.5).unwrap();
+    ctx.write_i32_le(4, -100).unwrap();
+
+    let qf = reed
+        .q_function_interior(
+            1,
+            vec![QFunctionField {
+                name: "u".into(),
+                num_comp: 1,
+                eval_mode: EvalMode::Interp,
+            }],
+            vec![QFunctionField {
+                name: "v".into(),
+                num_comp: 1,
+                eval_mode: EvalMode::Interp,
+            }],
+            8,
+            Box::new(|ctx_b, q, inputs, outputs| {
+                let a = f32::from_le_bytes(ctx_b[0..4].try_into().unwrap());
+                let b = i32::from_le_bytes(ctx_b[4..8].try_into().unwrap());
+                assert!((a - 2.5).abs() < 1.0e-6);
+                assert_eq!(b, -100);
+                for i in 0..q {
+                    outputs[0][i] = f64::from(inputs[0][i]) * f64::from(a) + f64::from(b);
+                }
+                Ok(())
+            }),
+        )
+        .unwrap();
+
+    let mut out = vec![0.0_f64; 3];
+    let inp = vec![1.0_f64, 2.0_f64, 3.0_f64];
+    qf.apply(ctx.as_bytes(), 3, &[inp.as_slice()], &mut [&mut out])
+        .unwrap();
+    assert_eq!(out, vec![-97.5, -95.0, -92.5]);
+}
+
+#[test]
 fn test_lagrange_vector_div_curl_smoke() {
     let reed = Reed::<f64>::init("/cpu/self").unwrap();
     let ne = 2usize;
