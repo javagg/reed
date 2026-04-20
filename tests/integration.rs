@@ -1,6 +1,6 @@
 use reed::{
-    EvalMode, FieldVector, OperatorTrait, QFunctionContext, QFunctionField, QuadMode, Reed,
-    TransposeMode,
+    ElemTopology, EvalMode, FieldVector, OperatorTrait, QFunctionContext, QFunctionField, QuadMode,
+    Reed, TransposeMode,
 };
 
 #[test]
@@ -297,9 +297,7 @@ fn test_wgpu_vector_basic_ops() {
 #[test]
 fn test_wgpu_elem_restriction_no_transpose_offset_f32() {
     let reed = Reed::<f32>::init("/gpu/wgpu").unwrap();
-    let r = reed
-        .elem_restriction(2, 2, 1, 1, 3, &[0, 1, 1, 2])
-        .unwrap();
+    let r = reed.elem_restriction(2, 2, 1, 1, 3, &[0, 1, 1, 2]).unwrap();
 
     let global = vec![10.0_f32, 20.0, 30.0];
     let mut local = vec![0.0_f32; 4];
@@ -804,7 +802,8 @@ fn test_lagrange_vector_div_curl_smoke() {
     let mut div2 = vec![0.0_f64; ne * b2.num_qpoints()];
     let mut curl2 = vec![0.0_f64; ne * b2.num_qpoints()];
     b2.apply(ne, false, EvalMode::Div, &u2, &mut div2).unwrap();
-    b2.apply(ne, false, EvalMode::Curl, &u2, &mut curl2).unwrap();
+    b2.apply(ne, false, EvalMode::Curl, &u2, &mut curl2)
+        .unwrap();
 
     let b3 = reed
         .basis_tensor_h1_lagrange(3, 3, 3, 4, QuadMode::Gauss)
@@ -813,7 +812,31 @@ fn test_lagrange_vector_div_curl_smoke() {
     let mut div3 = vec![0.0_f64; ne * b3.num_qpoints()];
     let mut curl3 = vec![0.0_f64; ne * b3.num_qpoints() * 3];
     b3.apply(ne, false, EvalMode::Div, &u3, &mut div3).unwrap();
-    b3.apply(ne, false, EvalMode::Curl, &u3, &mut curl3).unwrap();
+    b3.apply(ne, false, EvalMode::Curl, &u3, &mut curl3)
+        .unwrap();
+}
+
+#[test]
+fn test_cpu_simplex_p3_factory_dims_and_constant_field() {
+    let reed = Reed::<f64>::init("/cpu/self").unwrap();
+    let tri = reed
+        .basis_h1_simplex(ElemTopology::Triangle, 3, 1, 6)
+        .unwrap();
+    assert_eq!(tri.num_dof(), 10);
+    assert_eq!(tri.num_qpoints(), 6);
+    let tet = reed.basis_h1_simplex(ElemTopology::Tet, 3, 1, 5).unwrap();
+    assert_eq!(tet.num_dof(), 20);
+    assert_eq!(tet.num_qpoints(), 5);
+    let ne = 1usize;
+    let u = vec![1.0_f64; ne * tet.num_dof()];
+    let mut v = vec![0.0_f64; ne * tet.num_qpoints()];
+    tet.apply(ne, false, EvalMode::Interp, &u, &mut v).unwrap();
+    for &x in &v {
+        assert!(
+            (x - 1.0).abs() < 1e-11,
+            "constant P3 tet interp should be 1, got {x}"
+        );
+    }
 }
 
 #[cfg(feature = "wgpu-backend")]

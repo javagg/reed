@@ -1112,6 +1112,16 @@ mod tests {
     }
 
     #[test]
+    fn tet_p1_gradient_fd() {
+        fd_check_tet(1, 0.12, 0.1, 0.08, 1e-6);
+    }
+
+    #[test]
+    fn tet_p2_gradient_fd() {
+        fd_check_tet(2, 0.15, 0.11, 0.07, 1e-6);
+    }
+
+    #[test]
     fn tet_p3_gradient_fd() {
         fd_check_tet(3, 0.15, 0.12, 0.08, 1e-6);
     }
@@ -1176,6 +1186,169 @@ mod tests {
                 (*vv - expected).abs() < TOL,
                 "qpt {qi}: got {vv}, expected {expected}"
             );
+        }
+    }
+
+    // ── P2/P3 nodal identity & exact interpolation ──────────────────────
+
+    fn tri_p2_lattice_nodes() -> [(f64, f64); 6] {
+        [
+            (0.0, 0.0),
+            (1.0, 0.0),
+            (0.0, 1.0),
+            (0.5, 0.0),
+            (0.5, 0.5),
+            (0.0, 0.5),
+        ]
+    }
+
+    /// P3 triangle lattice (matches `simplex_p3_data` Vandermonde node order).
+    fn tri_p3_lattice_nodes() -> [(f64, f64); 10] {
+        [
+            (0.0, 0.0),
+            (1.0, 0.0),
+            (0.0, 1.0),
+            (1.0 / 3.0, 0.0),
+            (2.0 / 3.0, 0.0),
+            (2.0 / 3.0, 1.0 / 3.0),
+            (1.0 / 3.0, 2.0 / 3.0),
+            (0.0, 1.0 / 3.0),
+            (0.0, 2.0 / 3.0),
+            (1.0 / 3.0, 1.0 / 3.0),
+        ]
+    }
+
+    fn tet_p3_lattice_nodes() -> Vec<(f64, f64, f64)> {
+        let mut out = Vec::with_capacity(20);
+        for d0 in 0..4 {
+            for d1 in 0..(4 - d0) {
+                for d2 in 0..(4 - d0 - d1) {
+                    let d3 = 3 - d0 - d1 - d2;
+                    out.push((d1 as f64 / 3.0, d2 as f64 / 3.0, d3 as f64 / 3.0));
+                }
+            }
+        }
+        assert_eq!(out.len(), 20);
+        out
+    }
+
+    #[test]
+    fn tri_p2_nodal_kronecker() {
+        const EPS: f64 = 1e-12;
+        let nodes = tri_p2_lattice_nodes();
+        for (i, &(xi, yi)) in nodes.iter().enumerate() {
+            let (phi, _) = tri_p2_basis(xi, yi);
+            for (j, &v) in phi.iter().enumerate() {
+                let e = if i == j { 1.0 } else { 0.0 };
+                assert!(
+                    (v - e).abs() < EPS,
+                    "tri P2 node {i}, dof {j}: got {v}, expected {e}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn tri_p3_nodal_kronecker() {
+        const EPS: f64 = 5e-11;
+        let nodes = tri_p3_lattice_nodes();
+        for (i, &(xi, yi)) in nodes.iter().enumerate() {
+            let (phi, _) = tri_p3_basis(xi, yi);
+            for (j, &v) in phi.iter().enumerate() {
+                let e = if i == j { 1.0 } else { 0.0 };
+                assert!(
+                    (v - e).abs() < EPS,
+                    "tri P3 node {i}, dof {j}: got {v}, expected {e}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn tet_p3_nodal_kronecker() {
+        const EPS: f64 = 5e-10;
+        let nodes = tet_p3_lattice_nodes();
+        for (i, &(xi, yi, zi)) in nodes.iter().enumerate() {
+            let (phi, _) = tet_p3_basis(xi, yi, zi);
+            for (j, &v) in phi.iter().enumerate() {
+                let e = if i == j { 1.0 } else { 0.0 };
+                assert!(
+                    (v - e).abs() < EPS,
+                    "tet P3 node {i}, dof {j}: got {v}, expected {e}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn tri_p3_basis_apply_interp_cubic_exact() {
+        let nodes = tri_p3_lattice_nodes();
+        fn f(x: f64, y: f64) -> f64 {
+            x * x * y + 0.25 * y * y * y
+        }
+        let u: Vec<f64> = nodes.iter().map(|&(x, y)| f(x, y)).collect();
+        let basis = SimplexBasis::<f64>::new(ElemTopology::Triangle, 3, 1, 7).unwrap();
+        let mut v = vec![0.0_f64; basis.num_qpoints()];
+        basis.apply(1, false, EvalMode::Interp, &u, &mut v).unwrap();
+        let q_ref = basis.q_ref();
+        for iq in 0..basis.num_qpoints() {
+            let x = q_ref[iq * 2];
+            let y = q_ref[iq * 2 + 1];
+            let expected = f(x, y);
+            assert!(
+                (v[iq] - expected).abs() < 2e-11,
+                "qpt {iq}: got {}, expected {}",
+                v[iq],
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn tet_p3_basis_apply_interp_cubic_exact() {
+        let nodes = tet_p3_lattice_nodes();
+        fn g(x: f64, y: f64, z: f64) -> f64 {
+            x * y * z + x * x - 0.37 * y + 1.2 * z * z
+        }
+        let u: Vec<f64> = nodes.iter().map(|&(x, y, z)| g(x, y, z)).collect();
+        let basis = SimplexBasis::<f64>::new(ElemTopology::Tet, 3, 1, 5).unwrap();
+        let mut v = vec![0.0_f64; basis.num_qpoints()];
+        basis.apply(1, false, EvalMode::Interp, &u, &mut v).unwrap();
+        let q_ref = basis.q_ref();
+        for iq in 0..basis.num_qpoints() {
+            let x = q_ref[iq * 3];
+            let y = q_ref[iq * 3 + 1];
+            let z = q_ref[iq * 3 + 2];
+            let expected = g(x, y, z);
+            assert!(
+                (v[iq] - expected).abs() < 3e-10,
+                "qpt {iq}: got {}, expected {}",
+                v[iq],
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn tri_p3_basis_apply_grad_cubic_matches_analytic() {
+        let nodes = tri_p3_lattice_nodes();
+        fn f(x: f64, y: f64) -> f64 {
+            x * x * y
+        }
+        fn grad_f(x: f64, y: f64) -> (f64, f64) {
+            (2.0 * x * y, x * x)
+        }
+        let u: Vec<f64> = nodes.iter().map(|&(x, y)| f(x, y)).collect();
+        let basis = SimplexBasis::<f64>::new(ElemTopology::Triangle, 3, 1, 6).unwrap();
+        let mut v = vec![0.0_f64; basis.num_qpoints() * 2];
+        basis.apply(1, false, EvalMode::Grad, &u, &mut v).unwrap();
+        let q_ref = basis.q_ref();
+        for iq in 0..basis.num_qpoints() {
+            let x = q_ref[iq * 2];
+            let y = q_ref[iq * 2 + 1];
+            let (gx, gy) = grad_f(x, y);
+            assert!((v[iq * 2] - gx).abs() < 2e-10, "qpt {iq} ∂x");
+            assert!((v[iq * 2 + 1] - gy).abs() < 2e-10, "qpt {iq} ∂y");
         }
     }
 
