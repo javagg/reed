@@ -373,6 +373,20 @@ libCEED 内置 gallery 名称见上游 [`gallery/ceed-gallery-list.h`](https://g
 
 语义与 **offset 型** `elem_restriction` 相同，仅将「每单元局部点数」参数命名为 `npoints_per_elem` 以贴近上游命名。积分点布局仍由 `Basis` / 算子字段决定；表面离散、体积–边界耦合可参照 `examples/ex2_surface.rs` 与 libCEED surface 类示例对照迁移。
 
+**示例对照速查（CPU）**
+
+| libCEED 示例语义 | Reed 示例 |
+|---|---|
+| ex1-volume（体积积分 / 质量路径） | `examples/ex1_volume.rs` |
+| ex1-volume（AtPoints 命名迁移） | `examples/ex1_volume_at_points.rs` |
+| ex2-surface（边界/表面积路径） | `examples/ex2_surface.rs` |
+| ex3-volume-combined（质量 + Poisson 组合） | `examples/ex3_volume_combined.rs` |
+| Poisson（1D/2D/3D） | `examples/poisson.rs` |
+| Poisson（2D AtPoints 命名迁移） | `examples/poisson_at_points.rs` |
+| 向量质量 gallery 路径（`Vector2MassApply`） | `examples/vector_mass_operator.rs` |
+| 复合算子（代数型） | `examples/composite_operator.rs` |
+| 复合算子（借用型 / 同作用域网格对象） | `examples/composite_operator_refs.rs` |
+
 **复合算子（加法型）**
 
 | libCEED | Reed |

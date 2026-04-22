@@ -6,15 +6,22 @@ Current status: ex1/ex2/ex3 examples support 1D, 2D, and 3D with Reed gallery QF
 
 ```bash
 cargo run --example ex1_volume
+cargo run --example ex1_volume_at_points
 cargo run --example ex2_surface
 cargo run --example ex3_volume_combined
 cargo run --example poisson
+cargo run --example poisson_at_points
 cargo run --example mass_operator
+cargo run --example vector_mass_operator
 cargo run --example composite_operator
 cargo run --example composite_operator_refs
 ```
 
 `mass_operator` 演示 `Mass1DBuild` + `MassApply` 及 **`OperatorTrait::check_ready`** 与 **非对称** `active_input_global_len` / `active_output_global_len`。`composite_operator` 演示带 `'static` 的 `Box<dyn>` 子算子之和；`composite_operator_refs` 演示同一作用域内两个 `CpuOperator` 借用共享网格时的组合（对照 libCEED 在同一 `Ceed` 下组合句柄）。详见 `design_mapping.md` §8.2 与 §4.5.1。
+
+`ex1_volume_at_points` 演示以 `elem_restriction_at_points` 命名接口迁移 ex1-volume 风格流程（`Mass1DBuild` + `MassApplyAtPoints`）。
+`vector_mass_operator` 演示向量值质量算子路径（`Mass2DBuild` + `Vector2MassApply`），对应 libCEED 向量 gallery 示例语义。
+`poisson_at_points` 演示 AtPoints 命名路径下的 2D Poisson（`Poisson2DBuild` + `Poisson2DApplyAtPoints`）。
 
 ### ex1_volume optional args
 
@@ -22,6 +29,12 @@ cargo run --example composite_operator_refs
 cargo run --example ex1_volume -- --dim 1 --nelem 8 --p 2 --q 4
 cargo run --example ex1_volume -- --dim 2 --nelem 8 --p 2 --q 4
 cargo run --example ex1_volume -- --dim 3 --nelem 8 --p 2 --q 4
+```
+
+### ex1_volume_at_points optional args
+
+```bash
+cargo run --example ex1_volume_at_points -- --nelem 8 --p 2 --q 4
 ```
 
 ### ex2_surface optional args
@@ -50,6 +63,12 @@ cargo run --example ex3_volume_combined -- --dim 3 --nelem 8 --p 2 --q 4
 cargo run --example poisson -- --dim 1 --nelem 4 --p 2 --q 4
 cargo run --example poisson -- --dim 2 --nelem 4 --p 2 --q 4
 cargo run --example poisson -- --dim 3 --nelem 4 --p 2 --q 4
+```
+
+### poisson_at_points optional args
+
+```bash
+cargo run --example poisson_at_points -- --nelem 4 --p 2 --q 4
 ```
 
 ## CPU benchmarks
