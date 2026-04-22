@@ -348,14 +348,14 @@ libCEED 内置 gallery 名称见上游 [`gallery/ceed-gallery-list.h`](https://g
 | 更丰富 backend | 多 backend | CPU 为主；WGPU 渐进；CUDA/HIP 占位 |
 | 更完整 resource 兼容 | 丰富 | 当前主要 `/cpu/self`、`/cpu/self/ref`，可选 `/gpu/wgpu` |
 | 更复杂 operator 组合 | 支持 | **§4.5.1** 所列 CPU 侧迁移项已闭合；**多 active 场** 的 `Apply` / **`apply_field_buffers_with_transpose(Adjoint)`** 已由 `apply_field_buffers*` 覆盖；**被动输入槽**（含 `EvalMode::Weight`）不要求出现在 `Adjoint` 的命名 `outputs` 中（与 `reed_cpu::CpuOperator` 实现一致，见 `MassApplyInterpTimesWeight` 集成测） |
-| WGPU 与 CPU 张量 H1 基 | — | `Interp` / `Grad` / `Div` / `Curl`（含转置、交错积分点布局）在 `f32` 上由集成测试与 CPU 对齐；算子级 **gallery QFunction** 仍以 **CPU** 为主；**`MassApply` 点态乘** 已有 **独立 `GpuRuntime` dispatch**（见上行） |
+| WGPU 与 CPU 张量 H1 基 | — | `Interp` / `Grad` / `Div` / `Curl`（含转置、交错积分点布局）在 `f32` 上由集成测试与 CPU 对齐；算子级 **gallery QFunction** 仍以 **CPU** 为主；**`MassApply` 点态乘** 已有 **独立 `GpuRuntime` dispatch**（见上行）。另 **`MassApplyF32Wgpu`** / **`Poisson1DApplyF32Wgpu`** / **`Poisson2DApplyF32Wgpu`** / **`Poisson3DApplyF32Wgpu`** / **`Vector2MassApplyF32Wgpu`** / **`Vector3MassApplyF32Wgpu`** / **`Vector2Poisson1DApplyF32Wgpu`** / **`Vector3Poisson1DApplyF32Wgpu`** / **`Vector2Poisson2DApplyF32Wgpu`** / **`Vector3Poisson2DApplyF32Wgpu`** / **`IdentityF32Wgpu`** / **`ScaleF32Wgpu`**（`qfunction_device` + `GpuRuntime`）可作为 `OperatorBuilder::qfunction` 的 `Box<dyn QFunctionTrait<f32>>`（主机 q 缓冲上载/回读） |
 | WGPU 与 CPU 元限制 | — | offset 与 strided：`NoTranspose`（gather）在 **`f32` 与 `f64`** 上可走 GPU（`f64` 为 `u32` 对按 IEEE 位复制，无 WGSL `f64` 算术）；`Transpose`（scatter）在 `f32` 上为单线程 scatter，`f64` 仍走 CPU（需双精度加法） |
 
 ### 8.1 后续 libCEED 对齐优先级（建议）
 
 面向示例迁移与接口完备性，建议按依赖顺序推进：
 
-1. **QFunction / 算子设备路径**：在保持 gallery 与 `ClosureQFunction` CPU 正确的前提下，为 WGPU 规划 qdata 与 `QFunctionContext` 的设备驻留与回读约定（对齐 libCEED 的 context / field 注册思路）。**进展**：`GpuRuntime` 已提供 **`MassApply` 标量 `f32` qp 核**（前向与转置累加）；下一步是把 restriction/basis 产出的 **device 缓冲** 与该核及回读 **接入 `CpuOperator` 可选路径**（或专用设备算子壳层）。
+1. **QFunction / 算子设备路径**：在保持 gallery 与 `ClosureQFunction` CPU 正确的前提下，为 WGPU 规划 qdata 与 `QFunctionContext` 的设备驻留与回读约定（对齐 libCEED 的 context / field 注册思路）。**进展**：`GpuRuntime` 已提供 **`MassApply` 标量 `f32` qp 核**（前向与转置累加）；**设计草案与原型**见 `crates/wgpu/src/qfunction_device.rs`（[`QFunctionPrototypeScaleF32`](crates/wgpu/src/qfunction_device.rs)、[`MassApplyF32Wgpu`](crates/wgpu/src/qfunction_device.rs) / Poisson / Vector* / Identity / Scale 等 `f32` gallery 包装与 WGSL 入口；集成测试含 `test_wgpu_operator_poisson1d_gpu_poisson_qfunction_matches_cpu`、`test_wgpu_operator_poisson2d_vector2_poisson2d_gpu_qfunction_matches_cpu` 等）。下一步是把 restriction/basis 产出的 **device 缓冲** 与 qp 核及回读 **接入 `CpuOperator` 可选路径**（或专用设备算子壳层）。
 2. **Strided `ElemRestriction` on WGPU**：strided 的 gather / transpose（`f32`）与 **gather（`f64`，位复制）** 已由专用 compute 着色器实现；`f64` 的 `Transpose`、Basis、向量代数等仍主要回落 CPU（或见各模块说明）。
 3. **AtPoints 与边界算子**：将 `elem_restriction_at_points`、表面/体积算子组合等写入独立迁移笔记（与 `examples/` 中 ex2 类路径对应）。
 4. ~~**Operator 组合示例**~~：**§4.5.1** 与 `examples/mass_operator.rs`、`composite_operator*.rs` 已覆盖典型迁移路径；多子域编排留在应用层。

@@ -70,6 +70,27 @@ pub struct GpuRuntime {
     basis_grad_transpose_pipeline: wgpu::ComputePipeline,
     basis_post_layout: wgpu::BindGroupLayout,
     basis_post_pipeline: wgpu::ComputePipeline,
+    basis_weight_layout: wgpu::BindGroupLayout,
+    basis_weight_pipeline: wgpu::ComputePipeline,
+    /// Gallery-style scalar `out[i] = in0[i] * in1[i]` at quadrature points (Mass apply, Poisson1D apply, …).
+    qfunction_pointwise_mul_layout: wgpu::BindGroupLayout,
+    qfunction_pointwise_mul_pipeline: wgpu::ComputePipeline,
+    /// [`reed_cpu::Vector2MassApply`] / [`reed_cpu::Vector2Poisson1DApply`]: `v[2*i+c] = qdata[i] * u[2*i+c]` (same bind layout as pointwise mul).
+    qfunction_vector2_mass_apply_pipeline: wgpu::ComputePipeline,
+    /// [`reed_cpu::Vector3MassApply`] / [`reed_cpu::Vector3Poisson1DApply`]: `v[3*i+c] = qdata[i] * u[3*i+c]` (same bind layout).
+    qfunction_vector3_mass_apply_pipeline: wgpu::ComputePipeline,
+    /// [`reed_cpu::Poisson2DApply`]: 2×2 `qdata` times 2-vector `du` per quadrature point (same 4-slot layout).
+    qfunction_poisson2d_apply_pipeline: wgpu::ComputePipeline,
+    /// [`reed_cpu::Poisson3DApply`]: 3×3 `qdata` times 3-vector `du` per quadrature point (same 4-slot layout).
+    qfunction_poisson3d_apply_pipeline: wgpu::ComputePipeline,
+    /// [`reed_cpu::Vector2Poisson2DApply`]: same 2×2 `qdata` applied to two stacked 2-gradients per point.
+    qfunction_vector2_poisson2d_apply_pipeline: wgpu::ComputePipeline,
+    /// [`reed_cpu::Vector3Poisson2DApply`]: same 2×2 `qdata` applied to three stacked 2-gradients per point.
+    qfunction_vector3_poisson2d_apply_pipeline: wgpu::ComputePipeline,
+    /// Uniform + input SSBO + output SSBO: [`Identity`](reed_cpu::Identity) copy and [`Scale`](reed_cpu::Scale) `f32` path.
+    qfunction_unary_layout: wgpu::BindGroupLayout,
+    qfunction_identity_copy_pipeline: wgpu::ComputePipeline,
+    qfunction_scale_f32_pipeline: wgpu::ComputePipeline,
     mass_apply_qp_layout: wgpu::BindGroupLayout,
     mass_apply_qp_pipeline: wgpu::ComputePipeline,
     mass_apply_qp_transpose_pipeline: wgpu::ComputePipeline,
@@ -472,6 +493,242 @@ impl GpuRuntime {
             "basis_post_main",
         );
 
+        let basis_weight_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("reed-basis-weight-layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+        let shader_weight = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("reed-basis-weight"),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(BASIS_WEIGHT_WGSL)),
+        });
+        let basis_weight_pipeline = create_pipeline_with_module(
+            &device,
+            &basis_weight_layout,
+            &shader_weight,
+            "basis_weight_tile_main",
+        );
+
+        let qfunction_pointwise_mul_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("reed-qf-pointwise-mul-f32"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 2,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: true },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 3,
+                        visibility: wgpu::ShaderStages::COMPUTE,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Storage { read_only: false },
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    },
+                ],
+            });
+        let shader_qf_pointwise = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("reed-qf-pointwise-mul-f32"),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(
+                QFUNCTION_POINTWISE_MUL_WGSL,
+            )),
+        });
+        let qfunction_pointwise_mul_pipeline = create_pipeline_with_module(
+            &device,
+            &qfunction_pointwise_mul_layout,
+            &shader_qf_pointwise,
+            "qf_pointwise_mul_f32",
+        );
+        let shader_qf_vector2_mass = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("reed-qf-vector2-mass-apply-f32"),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(
+                QFUNCTION_VECTOR2_MASS_APPLY_WGSL,
+            )),
+        });
+        let qfunction_vector2_mass_apply_pipeline = create_pipeline_with_module(
+            &device,
+            &qfunction_pointwise_mul_layout,
+            &shader_qf_vector2_mass,
+            "vector2_mass_apply_f32",
+        );
+        let shader_qf_vector3_mass = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("reed-qf-vector3-mass-apply-f32"),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(
+                QFUNCTION_VECTOR3_MASS_APPLY_WGSL,
+            )),
+        });
+        let qfunction_vector3_mass_apply_pipeline = create_pipeline_with_module(
+            &device,
+            &qfunction_pointwise_mul_layout,
+            &shader_qf_vector3_mass,
+            "vector3_mass_apply_f32",
+        );
+        let shader_qf_poisson2d = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("reed-qf-poisson2d-apply-f32"),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(
+                QFUNCTION_POISSON2D_APPLY_WGSL,
+            )),
+        });
+        let qfunction_poisson2d_apply_pipeline = create_pipeline_with_module(
+            &device,
+            &qfunction_pointwise_mul_layout,
+            &shader_qf_poisson2d,
+            "poisson2d_apply_f32",
+        );
+        let shader_qf_poisson3d = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("reed-qf-poisson3d-apply-f32"),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(
+                QFUNCTION_POISSON3D_APPLY_WGSL,
+            )),
+        });
+        let qfunction_poisson3d_apply_pipeline = create_pipeline_with_module(
+            &device,
+            &qfunction_pointwise_mul_layout,
+            &shader_qf_poisson3d,
+            "poisson3d_apply_f32",
+        );
+        let shader_qf_v2p2 = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("reed-qf-vector2-poisson2d-apply-f32"),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(
+                QFUNCTION_VECTOR2_POISSON2D_APPLY_WGSL,
+            )),
+        });
+        let qfunction_vector2_poisson2d_apply_pipeline = create_pipeline_with_module(
+            &device,
+            &qfunction_pointwise_mul_layout,
+            &shader_qf_v2p2,
+            "vector2_poisson2d_apply_f32",
+        );
+        let shader_qf_v3p2 = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("reed-qf-vector3-poisson2d-apply-f32"),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(
+                QFUNCTION_VECTOR3_POISSON2D_APPLY_WGSL,
+            )),
+        });
+        let qfunction_vector3_poisson2d_apply_pipeline = create_pipeline_with_module(
+            &device,
+            &qfunction_pointwise_mul_layout,
+            &shader_qf_v3p2,
+            "vector3_poisson2d_apply_f32",
+        );
+
+        let qfunction_unary_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("reed-qf-unary-f32"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: true },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Storage { read_only: false },
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+        let shader_qf_identity = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("reed-qf-identity-copy-f32"),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(
+                QFUNCTION_IDENTITY_COPY_WGSL,
+            )),
+        });
+        let shader_qf_scale = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("reed-qf-scale-f32"),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(QFUNCTION_SCALE_F32_WGSL)),
+        });
+        let qfunction_identity_copy_pipeline = create_pipeline_with_module(
+            &device,
+            &qfunction_unary_layout,
+            &shader_qf_identity,
+            "qf_identity_copy_f32",
+        );
+        let qfunction_scale_f32_pipeline = create_pipeline_with_module(
+            &device,
+            &qfunction_unary_layout,
+            &shader_qf_scale,
+            "qf_scale_f32",
+        );
+
         let mass_apply_qp_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("reed-mass-apply-qp-layout"),
@@ -555,6 +812,19 @@ impl GpuRuntime {
             basis_grad_transpose_pipeline,
             basis_post_layout,
             basis_post_pipeline,
+            basis_weight_layout,
+            basis_weight_pipeline,
+            qfunction_pointwise_mul_layout,
+            qfunction_pointwise_mul_pipeline,
+            qfunction_vector2_mass_apply_pipeline,
+            qfunction_vector3_mass_apply_pipeline,
+            qfunction_poisson2d_apply_pipeline,
+            qfunction_poisson3d_apply_pipeline,
+            qfunction_vector2_poisson2d_apply_pipeline,
+            qfunction_vector3_poisson2d_apply_pipeline,
+            qfunction_unary_layout,
+            qfunction_identity_copy_pipeline,
+            qfunction_scale_f32_pipeline,
             mass_apply_qp_layout,
             mass_apply_qp_pipeline,
             mass_apply_qp_transpose_pipeline,
@@ -647,6 +917,58 @@ impl GpuRuntime {
 
     pub fn basis_post_pipeline(&self) -> &wgpu::ComputePipeline {
         &self.basis_post_pipeline
+    }
+
+    pub fn basis_weight_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.basis_weight_layout
+    }
+
+    pub fn basis_weight_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.basis_weight_pipeline
+    }
+
+    pub fn qfunction_pointwise_mul_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.qfunction_pointwise_mul_layout
+    }
+
+    pub fn qfunction_pointwise_mul_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.qfunction_pointwise_mul_pipeline
+    }
+
+    pub fn qfunction_vector2_mass_apply_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.qfunction_vector2_mass_apply_pipeline
+    }
+
+    pub fn qfunction_vector3_mass_apply_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.qfunction_vector3_mass_apply_pipeline
+    }
+
+    pub fn qfunction_poisson2d_apply_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.qfunction_poisson2d_apply_pipeline
+    }
+
+    pub fn qfunction_poisson3d_apply_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.qfunction_poisson3d_apply_pipeline
+    }
+
+    pub fn qfunction_vector2_poisson2d_apply_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.qfunction_vector2_poisson2d_apply_pipeline
+    }
+
+    pub fn qfunction_vector3_poisson2d_apply_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.qfunction_vector3_poisson2d_apply_pipeline
+    }
+
+    pub fn qfunction_unary_layout(&self) -> &wgpu::BindGroupLayout {
+        &self.qfunction_unary_layout
+    }
+
+    pub fn qfunction_identity_copy_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.qfunction_identity_copy_pipeline
+    }
+
+    pub fn qfunction_scale_f32_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.qfunction_scale_f32_pipeline
     }
 
     pub fn mass_apply_qp_layout(&self) -> &wgpu::BindGroupLayout {
@@ -1397,6 +1719,299 @@ fn restriction_strided_scatter_main(@builtin(global_invocation_id) gid: vec3<u32
     }
 }
 "#;
+
+/// Scalar gallery QFunction apply: `out[i] = in0[i] * in1[i]` (e.g. `MassApply`, `Poisson1DApply`).
+const QFUNCTION_POINTWISE_MUL_WGSL: &str = r#"
+struct QfPointwiseMulParams {
+    num_q: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+};
+
+@group(0) @binding(0) var<uniform> qfp: QfPointwiseMulParams;
+@group(0) @binding(1) var<storage, read> qf_in0: array<f32>;
+@group(0) @binding(2) var<storage, read> qf_in1: array<f32>;
+@group(0) @binding(3) var<storage, read_write> qf_out: array<f32>;
+
+@compute @workgroup_size(256)
+fn qf_pointwise_mul_f32(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= qfp.num_q) {
+        return;
+    }
+    qf_out[i] = qf_in0[i] * qf_in1[i];
+}
+"#;
+
+/// [`reed_cpu::Vector2MassApply`] on `f32`: two components per quadrature point, one scalar `qdata` per point.
+const QFUNCTION_VECTOR2_MASS_APPLY_WGSL: &str = r#"
+struct QfVec2MassParams {
+    num_qp: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+};
+
+@group(0) @binding(0) var<uniform> qp: QfVec2MassParams;
+@group(0) @binding(1) var<storage, read> qu: array<f32>;
+@group(0) @binding(2) var<storage, read> qqdata: array<f32>;
+@group(0) @binding(3) var<storage, read_write> qv: array<f32>;
+
+@compute @workgroup_size(256)
+fn vector2_mass_apply_f32(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let flat = gid.x;
+    let n = qp.num_qp * 2u;
+    if (flat >= n) {
+        return;
+    }
+    let iq = flat / 2u;
+    qv[flat] = qqdata[iq] * qu[flat];
+}
+"#;
+
+/// [`reed_cpu::Vector3MassApply`] on `f32`: three components per quadrature point, one scalar `qdata` per point.
+const QFUNCTION_VECTOR3_MASS_APPLY_WGSL: &str = r#"
+struct QfVec3MassParams {
+    num_qp: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+};
+
+@group(0) @binding(0) var<uniform> qp: QfVec3MassParams;
+@group(0) @binding(1) var<storage, read> qu: array<f32>;
+@group(0) @binding(2) var<storage, read> qqdata: array<f32>;
+@group(0) @binding(3) var<storage, read_write> qv: array<f32>;
+
+@compute @workgroup_size(256)
+fn vector3_mass_apply_f32(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let flat = gid.x;
+    let n = qp.num_qp * 3u;
+    if (flat >= n) {
+        return;
+    }
+    let iq = flat / 3u;
+    qv[flat] = qqdata[iq] * qu[flat];
+}
+"#;
+
+/// [`reed_cpu::Poisson2DApply`] on `f32`: `dv[2*i+0] = g00*du0+g01*du1`, `dv[2*i+1] = g10*du0+g11*du1` with `qdata[4*i+0..4]` storing the 2×2 stiffness block.
+const QFUNCTION_POISSON2D_APPLY_WGSL: &str = r#"
+struct QfPoisson2DParams {
+    num_q: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+};
+
+@group(0) @binding(0) var<uniform> qp: QfPoisson2DParams;
+@group(0) @binding(1) var<storage, read> qdu: array<f32>;
+@group(0) @binding(2) var<storage, read> qqdata: array<f32>;
+@group(0) @binding(3) var<storage, read_write> qdv: array<f32>;
+
+@compute @workgroup_size(256)
+fn poisson2d_apply_f32(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= qp.num_q) {
+        return;
+    }
+    let du0 = qdu[i * 2u];
+    let du1 = qdu[i * 2u + 1u];
+    let b = i * 4u;
+    let g00 = qqdata[b + 0u];
+    let g01 = qqdata[b + 1u];
+    let g10 = qqdata[b + 2u];
+    let g11 = qqdata[b + 3u];
+    qdv[i * 2u] = g00 * du0 + g01 * du1;
+    qdv[i * 2u + 1u] = g10 * du0 + g11 * du1;
+}
+"#;
+
+/// [`reed_cpu::Poisson3DApply`] on `f32`: row-major 3×3 `qdata[9*i+..]` times `du[3*i+..]` into `dv[3*i+..]`.
+const QFUNCTION_POISSON3D_APPLY_WGSL: &str = r#"
+struct QfPoisson3DParams {
+    num_q: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+};
+
+@group(0) @binding(0) var<uniform> qp: QfPoisson3DParams;
+@group(0) @binding(1) var<storage, read> qdu: array<f32>;
+@group(0) @binding(2) var<storage, read> qqdata: array<f32>;
+@group(0) @binding(3) var<storage, read_write> qdv: array<f32>;
+
+@compute @workgroup_size(256)
+fn poisson3d_apply_f32(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= qp.num_q) {
+        return;
+    }
+    let du0 = qdu[i * 3u];
+    let du1 = qdu[i * 3u + 1u];
+    let du2 = qdu[i * 3u + 2u];
+    let b = i * 9u;
+    let g00 = qqdata[b + 0u];
+    let g01 = qqdata[b + 1u];
+    let g02 = qqdata[b + 2u];
+    let g10 = qqdata[b + 3u];
+    let g11 = qqdata[b + 4u];
+    let g12 = qqdata[b + 5u];
+    let g20 = qqdata[b + 6u];
+    let g21 = qqdata[b + 7u];
+    let g22 = qqdata[b + 8u];
+    qdv[i * 3u] = g00 * du0 + g01 * du1 + g02 * du2;
+    qdv[i * 3u + 1u] = g10 * du0 + g11 * du1 + g12 * du2;
+    qdv[i * 3u + 2u] = g20 * du0 + g21 * du1 + g22 * du2;
+}
+"#;
+
+/// [`reed_cpu::Vector2Poisson2DApply`] on `f32`: shared 2×2 `qdata[i*4..]` times each of two 2-gradients packed in `du[i*4..]`.
+const QFUNCTION_VECTOR2_POISSON2D_APPLY_WGSL: &str = r#"
+struct QfV2P2Params {
+    num_q: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+};
+
+@group(0) @binding(0) var<uniform> qp: QfV2P2Params;
+@group(0) @binding(1) var<storage, read> qdu: array<f32>;
+@group(0) @binding(2) var<storage, read> qqdata: array<f32>;
+@group(0) @binding(3) var<storage, read_write> qdv: array<f32>;
+
+@compute @workgroup_size(256)
+fn vector2_poisson2d_apply_f32(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= qp.num_q) {
+        return;
+    }
+    let qb = i * 4u;
+    let g00 = qqdata[qb + 0u];
+    let g01 = qqdata[qb + 1u];
+    let g10 = qqdata[qb + 2u];
+    let g11 = qqdata[qb + 3u];
+    let du0a = qdu[qb + 0u];
+    let du1a = qdu[qb + 1u];
+    let du0b = qdu[qb + 2u];
+    let du1b = qdu[qb + 3u];
+    qdv[qb + 0u] = g00 * du0a + g01 * du1a;
+    qdv[qb + 1u] = g10 * du0a + g11 * du1a;
+    qdv[qb + 2u] = g00 * du0b + g01 * du1b;
+    qdv[qb + 3u] = g10 * du0b + g11 * du1b;
+}
+"#;
+
+/// [`reed_cpu::Vector3Poisson2DApply`] on `f32`: shared 2×2 `qdata` times three 2-gradients in `du[i*6..]`.
+const QFUNCTION_VECTOR3_POISSON2D_APPLY_WGSL: &str = r#"
+struct QfV3P2Params {
+    num_q: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+};
+
+@group(0) @binding(0) var<uniform> qp: QfV3P2Params;
+@group(0) @binding(1) var<storage, read> qdu: array<f32>;
+@group(0) @binding(2) var<storage, read> qqdata: array<f32>;
+@group(0) @binding(3) var<storage, read_write> qdv: array<f32>;
+
+@compute @workgroup_size(256)
+fn vector3_poisson2d_apply_f32(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= qp.num_q) {
+        return;
+    }
+    let qb = i * 4u;
+    let g00 = qqdata[qb + 0u];
+    let g01 = qqdata[qb + 1u];
+    let g10 = qqdata[qb + 2u];
+    let g11 = qqdata[qb + 3u];
+    let b6 = i * 6u;
+    for (var c = 0u; c < 3u; c = c + 1u) {
+        let base = c * 2u;
+        let du0 = qdu[b6 + base];
+        let du1 = qdu[b6 + base + 1u];
+        qdv[b6 + base] = g00 * du0 + g01 * du1;
+        qdv[b6 + base + 1u] = g10 * du0 + g11 * du1;
+    }
+}
+"#;
+
+/// [`reed_cpu::Identity`] on `f32`: `out[i] = in[i]` for `i in 0..n` (flat `q * num_comp` words).
+const QFUNCTION_IDENTITY_COPY_WGSL: &str = r#"
+struct QfUnaryWordParams {
+    n: u32,
+    _p0: u32,
+    _p1: u32,
+    _p2: u32,
+};
+
+@group(0) @binding(0) var<uniform> qp: QfUnaryWordParams;
+@group(0) @binding(1) var<storage, read> qin: array<f32>;
+@group(0) @binding(2) var<storage, read_write> qout: array<f32>;
+
+@compute @workgroup_size(256)
+fn qf_identity_copy_f32(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= qp.n) {
+        return;
+    }
+    qout[i] = qin[i];
+}
+"#;
+
+/// [`reed_cpu::Scale`] on `f32`: `out[i] = alpha * in[i]`; `alpha` from uniform (host reads libCEED 8-byte `f64` context).
+const QFUNCTION_SCALE_F32_WGSL: &str = r#"
+struct QfScaleF32Params {
+    n: u32,
+    _pad0: u32,
+    alpha: f32,
+    _pad1: f32,
+};
+
+@group(0) @binding(0) var<uniform> qp: QfScaleF32Params;
+@group(0) @binding(1) var<storage, read> qin: array<f32>;
+@group(0) @binding(2) var<storage, read_write> qout: array<f32>;
+
+@compute @workgroup_size(256)
+fn qf_scale_f32(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= qp.n) {
+        return;
+    }
+    qout[i] = qp.alpha * qin[i];
+}
+"#;
+
+/// Transpose (scatter): `v[g] += u[l]` for offset or strided layout. Single-thread loop (workgroup size 1) so
+/// we avoid `atomicCompareExchange` (not available on all Metal targets) while matching CPU `+=`.
+
+/// Tile reference quadrature weights across elements: `v[e*nq + q] = weights[q]`.
+const BASIS_WEIGHT_WGSL: &str = r#"
+struct BasisWeightParams {
+    num_qpoints: u32,
+    out_size: u32,
+    _pad0: u32,
+    _pad1: u32,
+};
+
+@group(0) @binding(0) var<storage, read> bw_weights: array<f32>;
+@group(0) @binding(1) var<storage, read_write> bw_v: array<f32>;
+@group(0) @binding(2) var<uniform> bw_p: BasisWeightParams;
+
+@compute @workgroup_size(64)
+fn basis_weight_tile_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= bw_p.out_size) {
+        return;
+    }
+    let q = i % bw_p.num_qpoints;
+    bw_v[i] = bw_weights[q];
+}
+"#;
+
 
 /// Transpose (scatter): `v[g] += u[l]` for offset layout. Single-thread loop (workgroup size 1) so
 /// we avoid `atomicCompareExchange` (not available on all Metal targets) while matching CPU `+=`.

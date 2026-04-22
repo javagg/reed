@@ -200,6 +200,16 @@ impl<T: Scalar> SimplexBasis<T> {
         })
     }
 
+    /// Row-major interpolation operator `[num_qpoints × num_dof]` (same packing as `LagrangeBasis`).
+    pub fn interp_matrix(&self) -> &[T] {
+        &self.interp
+    }
+
+    /// Row-major gradient tensor `(qpt * num_dof + dof) * dim + d` (same packing as `LagrangeBasis`).
+    pub fn grad_matrix(&self) -> &[T] {
+        &self.grad
+    }
+
     // ── accessor helpers ───────────────────────────────────────────────────
 
     #[inline]

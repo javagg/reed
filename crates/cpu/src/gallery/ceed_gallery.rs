@@ -585,7 +585,7 @@ impl<T: Scalar> QFunctionTrait<T> for Vector2Poisson1DApply {
 }
 
 /// `"Vector2Poisson2DApply"` — two stacked 2D Poisson gradient applies (`qdata` layout matches `Poisson2DApply`).
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Vector2Poisson2DApply {
     inputs: Vec<QFunctionField>,
     outputs: Vec<QFunctionField>,
@@ -612,6 +612,12 @@ impl Vector2Poisson2DApply {
                 eval_mode: EvalMode::Grad,
             }],
         }
+    }
+}
+
+impl Default for Vector2Poisson2DApply {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -931,7 +937,7 @@ impl<T: Scalar> QFunctionTrait<T> for Vector3Poisson1DApply {
 ///
 /// `qdata` uses the same **4** stiffness entries per point as `Poisson2DApply` / `Poisson2DBuild`.
 /// libCEED registers 3 symmetric components; Reed keeps 4 to match the existing scalar Poisson pipeline.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct Vector3Poisson2DApply {
     inputs: Vec<QFunctionField>,
     outputs: Vec<QFunctionField>,
@@ -958,6 +964,12 @@ impl Vector3Poisson2DApply {
                 eval_mode: EvalMode::Grad,
             }],
         }
+    }
+}
+
+impl Default for Vector3Poisson2DApply {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

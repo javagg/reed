@@ -1,8 +1,9 @@
 use reed::{
     CeedMatrix, CeedMatrixStorage, CompositeOperator, CpuOperator, CsrMatrix, ElemRestrictionTrait,
-    ElemTopology, EvalMode, FieldVector, OperatorAssembleKind, OperatorTrait, OperatorTransposeRequest, QFunctionCategory,
-    QFunctionContext, QFunctionField, QuadMode, QFUNCTION_INTERIOR_GALLERY_NAMES,
-    QFUNCTION_LIBCEED_MAIN_GALLERY_NAMES, Reed, ReedError, ReedResult, TransposeMode, VectorTrait,
+    ElemTopology, EvalMode, FieldVector, OperatorAssembleKind, OperatorTrait,
+    OperatorTransposeRequest, QFunctionCategory, QFunctionContext, QFunctionField, QFunctionTrait,
+    QuadMode, QFUNCTION_INTERIOR_GALLERY_NAMES, QFUNCTION_LIBCEED_MAIN_GALLERY_NAMES, Reed,
+    ReedError, ReedResult, TransposeMode, VectorTrait,
 };
 
 #[test]
@@ -2001,6 +2002,1437 @@ fn test_wgpu_vector_basic_ops() {
     }
 }
 
+/// End-to-end `CpuOperator` on `f32`: restriction + Lagrange basis use WGPU where implemented;
+/// gallery QFunction and assembly loops remain on CPU.
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_operator_mass1d_build_and_apply_matches_cpu() {
+    let run = |reed: &Reed<f32>| -> Vec<f32> {
+        let nelem = 2usize;
+        let p = 2usize;
+        let q = 2usize;
+        let ndofs = nelem + 1;
+
+        let node_coords = vec![-1.0_f32, 0.0, 1.0];
+        let x_coord = reed.vector_from_slice(&node_coords).unwrap();
+        let mut qdata = reed.vector(nelem * q).unwrap();
+        qdata.set_value(0.0_f32).unwrap();
+
+        let ind_x = vec![0, 1, 1, 2];
+        let ind_u = ind_x.clone();
+
+        let r_x = reed
+            .elem_restriction(nelem, 2, 1, 1, ndofs, &ind_x)
+            .unwrap();
+        let r_u = reed
+            .elem_restriction(nelem, p, 1, 1, ndofs, &ind_u)
+            .unwrap();
+        let r_q = reed
+            .strided_elem_restriction(nelem, q, 1, nelem * q, [1, q as i32, q as i32])
+            .unwrap();
+
+        let b_x = reed
+            .basis_tensor_h1_lagrange(1, 1, 2, q, QuadMode::Gauss)
+            .unwrap();
+        let b_u = reed
+            .basis_tensor_h1_lagrange(1, 1, p, q, QuadMode::Gauss)
+            .unwrap();
+
+        let build = reed
+            .operator_builder()
+            .qfunction(reed.q_function_by_name("Mass1DBuild").unwrap())
+            .field("dx", Some(&*r_x), Some(&*b_x), FieldVector::Active)
+            .field("weights", None, Some(&*b_x), FieldVector::None)
+            .field("qdata", Some(&*r_q), None, FieldVector::Active)
+            .build()
+            .unwrap();
+        build.apply(&*x_coord, &mut *qdata).unwrap();
+
+        let op_mass = reed
+            .operator_builder()
+            .qfunction(reed.q_function_by_name("MassApply").unwrap())
+            .field("u", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+            .field("qdata", Some(&*r_q), None, FieldVector::Passive(&*qdata))
+            .field("v", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+            .build()
+            .unwrap();
+
+        let u = reed.vector_from_slice(&vec![1.0_f32; ndofs]).unwrap();
+        let mut v = reed.vector(ndofs).unwrap();
+        v.set_value(0.0_f32).unwrap();
+        op_mass.apply(&*u, &mut *v).unwrap();
+
+        let mut values = vec![0.0_f32; ndofs];
+        v.copy_to_slice(&mut values).unwrap();
+        values
+    };
+
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let v_cpu = run(&reed_cpu);
+    let v_gpu = run(&reed_gpu);
+    for (a, b) in v_cpu.iter().zip(v_gpu.iter()) {
+        assert!((a - b).abs() < 5.0e-4, "cpu={a} gpu={b}");
+    }
+    let sum_cpu: f32 = v_cpu.iter().sum();
+    let sum_gpu: f32 = v_gpu.iter().sum();
+    assert!((sum_cpu - 2.0).abs() < 1.0e-3, "sum_cpu={sum_cpu}");
+    assert!((sum_gpu - 2.0).abs() < 1.0e-3, "sum_gpu={sum_gpu}");
+}
+
+/// Mass operator apply step uses device WGSL [`reed_wgpu::MassApplyF32Wgpu`] (host q-vectors +
+/// GPU pointwise multiply + readback); build and restriction/basis paths unchanged.
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_operator_mass1d_gpu_mass_qfunction_matches_cpu() {
+    let rt = reed_wgpu::WgpuBackend::<f32>::new()
+        .gpu_runtime()
+        .expect("wgpu runtime");
+    let qf_gpu = Box::new(
+        reed_wgpu::MassApplyF32Wgpu::new(rt).expect("MassApplyF32Wgpu::new"),
+    );
+
+    let run = |reed: &Reed<f32>, qf: Box<dyn QFunctionTrait<f32>>| -> Vec<f32> {
+        let nelem = 2usize;
+        let p = 2usize;
+        let q = 2usize;
+        let ndofs = nelem + 1;
+
+        let node_coords = vec![-1.0_f32, 0.0, 1.0];
+        let x_coord = reed.vector_from_slice(&node_coords).unwrap();
+        let mut qdata = reed.vector(nelem * q).unwrap();
+        qdata.set_value(0.0_f32).unwrap();
+
+        let ind_x = vec![0, 1, 1, 2];
+        let ind_u = ind_x.clone();
+
+        let r_x = reed
+            .elem_restriction(nelem, 2, 1, 1, ndofs, &ind_x)
+            .unwrap();
+        let r_u = reed
+            .elem_restriction(nelem, p, 1, 1, ndofs, &ind_u)
+            .unwrap();
+        let r_q = reed
+            .strided_elem_restriction(nelem, q, 1, nelem * q, [1, q as i32, q as i32])
+            .unwrap();
+
+        let b_x = reed
+            .basis_tensor_h1_lagrange(1, 1, 2, q, QuadMode::Gauss)
+            .unwrap();
+        let b_u = reed
+            .basis_tensor_h1_lagrange(1, 1, p, q, QuadMode::Gauss)
+            .unwrap();
+
+        let build = reed
+            .operator_builder()
+            .qfunction(reed.q_function_by_name("Mass1DBuild").unwrap())
+            .field("dx", Some(&*r_x), Some(&*b_x), FieldVector::Active)
+            .field("weights", None, Some(&*b_x), FieldVector::None)
+            .field("qdata", Some(&*r_q), None, FieldVector::Active)
+            .build()
+            .unwrap();
+        build.apply(&*x_coord, &mut *qdata).unwrap();
+
+        let op_mass = reed
+            .operator_builder()
+            .qfunction(qf)
+            .field("u", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+            .field("qdata", Some(&*r_q), None, FieldVector::Passive(&*qdata))
+            .field("v", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+            .build()
+            .unwrap();
+
+        let u = reed.vector_from_slice(&vec![1.0_f32; ndofs]).unwrap();
+        let mut v = reed.vector(ndofs).unwrap();
+        v.set_value(0.0_f32).unwrap();
+        op_mass.apply(&*u, &mut *v).unwrap();
+
+        let mut values = vec![0.0_f32; ndofs];
+        v.copy_to_slice(&mut values).unwrap();
+        values
+    };
+
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let v_cpu = run(&reed_cpu, reed_cpu.q_function_by_name("MassApply").unwrap());
+    let v_gpu = run(&reed_gpu, qf_gpu);
+    for (a, b) in v_cpu.iter().zip(v_gpu.iter()) {
+        assert!((a - b).abs() < 5.0e-4, "cpu={a} gpu={b}");
+    }
+}
+
+/// 2D tensor mesh + two-component field: apply step uses [`reed_wgpu::Vector2MassApplyF32Wgpu`];
+/// build and restriction/basis match `examples/ex1_volume` 2D layout (`compstride = ndofs`).
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_operator_mass2d_vector2_gpu_qfunction_matches_cpu() {
+    fn build_offsets_2d(nelem_1d: usize, p: usize, ndofs_1d: usize) -> Vec<i32> {
+        let mut offsets = Vec::with_capacity(nelem_1d * nelem_1d * p * p);
+        for ey in 0..nelem_1d {
+            for ex in 0..nelem_1d {
+                let sy = ey * (p - 1);
+                let sx = ex * (p - 1);
+                for jy in 0..p {
+                    for jx in 0..p {
+                        let gi = (sy + jy) * ndofs_1d + (sx + jx);
+                        offsets.push(gi as i32);
+                    }
+                }
+            }
+        }
+        offsets
+    }
+
+    let rt = reed_wgpu::WgpuBackend::<f32>::new()
+        .gpu_runtime()
+        .expect("wgpu runtime");
+    let qf_gpu = Box::new(
+        reed_wgpu::Vector2MassApplyF32Wgpu::new(rt).expect("Vector2MassApplyF32Wgpu::new"),
+    );
+
+    let run = |reed: &Reed<f32>, qf: Box<dyn QFunctionTrait<f32>>| -> Vec<f32> {
+        let dim = 2usize;
+        let nelem_1d = 1usize;
+        let p = 2usize;
+        let q = 2usize;
+        let ndofs_1d = nelem_1d * (p - 1) + 1;
+        let nelem = nelem_1d.pow(dim as u32);
+        let ndofs = ndofs_1d.pow(dim as u32);
+        let qpts_per_elem = q.pow(dim as u32);
+        let elemsize = p.pow(dim as u32);
+
+        let offsets = build_offsets_2d(nelem_1d, p, ndofs_1d);
+
+        // `examples/ex1_volume` `build_coords(2, ndofs_1d)`: all x per node, then all y.
+        let x_coords: Vec<f32> = vec![-1.0, 1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0];
+        let x_coord = reed.vector_from_slice(&x_coords).unwrap();
+        let mut qdata = reed.vector(nelem * qpts_per_elem).unwrap();
+        qdata.set_value(0.0_f32).unwrap();
+
+        let r_x = reed
+            .elem_restriction(nelem, elemsize, dim, ndofs, dim * ndofs, &offsets)
+            .unwrap();
+        let r_u = reed
+            .elem_restriction(nelem, elemsize, 2, ndofs, 2 * ndofs, &offsets)
+            .unwrap();
+        let r_q = reed
+            .strided_elem_restriction(
+                nelem,
+                qpts_per_elem,
+                1,
+                nelem * qpts_per_elem,
+                [1, qpts_per_elem as i32, qpts_per_elem as i32],
+            )
+            .unwrap();
+
+        let b_x = reed
+            .basis_tensor_h1_lagrange(dim, dim, p, q, QuadMode::Gauss)
+            .unwrap();
+        let b_u = reed
+            .basis_tensor_h1_lagrange(dim, 2, p, q, QuadMode::Gauss)
+            .unwrap();
+
+        let build = reed
+            .operator_builder()
+            .qfunction(reed.q_function_by_name("Mass2DBuild").unwrap())
+            .field("dx", Some(&*r_x), Some(&*b_x), FieldVector::Active)
+            .field("weights", None, Some(&*b_x), FieldVector::None)
+            .field("qdata", Some(&*r_q), None, FieldVector::Active)
+            .build()
+            .unwrap();
+        build.apply(&*x_coord, &mut *qdata).unwrap();
+
+        let op_mass = reed
+            .operator_builder()
+            .qfunction(qf)
+            .field("u", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+            .field("qdata", Some(&*r_q), None, FieldVector::Passive(&*qdata))
+            .field("v", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+            .build()
+            .unwrap();
+
+        let u = reed
+            .vector_from_slice(&vec![1.0_f32; 2 * ndofs])
+            .unwrap();
+        let mut v = reed.vector(2 * ndofs).unwrap();
+        v.set_value(0.0_f32).unwrap();
+        op_mass.apply(&*u, &mut *v).unwrap();
+
+        let mut values = vec![0.0_f32; 2 * ndofs];
+        v.copy_to_slice(&mut values).unwrap();
+        values
+    };
+
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let v_cpu = run(
+        &reed_cpu,
+        reed_cpu.q_function_by_name("Vector2MassApply").unwrap(),
+    );
+    let v_gpu = run(&reed_gpu, qf_gpu);
+    for (a, b) in v_cpu.iter().zip(v_gpu.iter()) {
+        assert!((a - b).abs() < 1.0e-3, "cpu={a} gpu={b}");
+    }
+}
+
+/// Single hex in `[-1,1]^3`: [`Mass3DBuild`] + three-component field + [`reed_wgpu::Vector3MassApplyF32Wgpu`].
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_operator_mass3d_vector3_gpu_qfunction_matches_cpu() {
+    fn build_offsets_3d(nelem_1d: usize, p: usize, ndofs_1d: usize) -> Vec<i32> {
+        let mut offsets = Vec::with_capacity(nelem_1d.pow(3) * p.pow(3));
+        for ez in 0..nelem_1d {
+            for ey in 0..nelem_1d {
+                for ex in 0..nelem_1d {
+                    let sz = ez * (p - 1);
+                    let sy = ey * (p - 1);
+                    let sx = ex * (p - 1);
+                    for jz in 0..p {
+                        for jy in 0..p {
+                            for jx in 0..p {
+                                let gi = ((sz + jz) * ndofs_1d + (sy + jy)) * ndofs_1d + (sx + jx);
+                                offsets.push(gi as i32);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        offsets
+    }
+
+    fn build_coords_dim3_f32(ndofs_1d: usize) -> Vec<f32> {
+        let ndofs = ndofs_1d.pow(3);
+        let mut out = vec![0.0_f32; 3 * ndofs];
+        let denom = (ndofs_1d.saturating_sub(1).max(1)) as f32;
+        for iz in 0..ndofs_1d {
+            for iy in 0..ndofs_1d {
+                for ix in 0..ndofs_1d {
+                    let i = (iz * ndofs_1d + iy) * ndofs_1d + ix;
+                    out[i] = -1.0 + 2.0 * ix as f32 / denom;
+                    out[ndofs + i] = -1.0 + 2.0 * iy as f32 / denom;
+                    out[2 * ndofs + i] = -1.0 + 2.0 * iz as f32 / denom;
+                }
+            }
+        }
+        out
+    }
+
+    let rt = reed_wgpu::WgpuBackend::<f32>::new()
+        .gpu_runtime()
+        .expect("wgpu runtime");
+    let qf_gpu = Box::new(
+        reed_wgpu::Vector3MassApplyF32Wgpu::new(rt).expect("Vector3MassApplyF32Wgpu::new"),
+    );
+
+    let run = |reed: &Reed<f32>, qf: Box<dyn QFunctionTrait<f32>>| -> Vec<f32> {
+        let dim = 3usize;
+        let nelem_1d = 1usize;
+        let p = 2usize;
+        let q = 2usize;
+        let ndofs_1d = nelem_1d * (p - 1) + 1;
+        let nelem = nelem_1d.pow(dim as u32);
+        let ndofs = ndofs_1d.pow(dim as u32);
+        let qpts_per_elem = q.pow(dim as u32);
+        let elemsize = p.pow(dim as u32);
+
+        let offsets = build_offsets_3d(nelem_1d, p, ndofs_1d);
+        let x_coords = build_coords_dim3_f32(ndofs_1d);
+        let x_coord = reed.vector_from_slice(&x_coords).unwrap();
+        let mut qdata = reed.vector(nelem * qpts_per_elem).unwrap();
+        qdata.set_value(0.0_f32).unwrap();
+
+        let r_x = reed
+            .elem_restriction(nelem, elemsize, dim, ndofs, dim * ndofs, &offsets)
+            .unwrap();
+        let r_u = reed
+            .elem_restriction(nelem, elemsize, 3, ndofs, 3 * ndofs, &offsets)
+            .unwrap();
+        let r_q = reed
+            .strided_elem_restriction(
+                nelem,
+                qpts_per_elem,
+                1,
+                nelem * qpts_per_elem,
+                [1, qpts_per_elem as i32, qpts_per_elem as i32],
+            )
+            .unwrap();
+
+        let b_x = reed
+            .basis_tensor_h1_lagrange(dim, dim, p, q, QuadMode::Gauss)
+            .unwrap();
+        let b_u = reed
+            .basis_tensor_h1_lagrange(dim, 3, p, q, QuadMode::Gauss)
+            .unwrap();
+
+        let build = reed
+            .operator_builder()
+            .qfunction(reed.q_function_by_name("Mass3DBuild").unwrap())
+            .field("dx", Some(&*r_x), Some(&*b_x), FieldVector::Active)
+            .field("weights", None, Some(&*b_x), FieldVector::None)
+            .field("qdata", Some(&*r_q), None, FieldVector::Active)
+            .build()
+            .unwrap();
+        build.apply(&*x_coord, &mut *qdata).unwrap();
+
+        let op_mass = reed
+            .operator_builder()
+            .qfunction(qf)
+            .field("u", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+            .field("qdata", Some(&*r_q), None, FieldVector::Passive(&*qdata))
+            .field("v", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+            .build()
+            .unwrap();
+
+        let u = reed
+            .vector_from_slice(&vec![1.0_f32; 3 * ndofs])
+            .unwrap();
+        let mut v = reed.vector(3 * ndofs).unwrap();
+        v.set_value(0.0_f32).unwrap();
+        op_mass.apply(&*u, &mut *v).unwrap();
+
+        let mut values = vec![0.0_f32; 3 * ndofs];
+        v.copy_to_slice(&mut values).unwrap();
+        values
+    };
+
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let v_cpu = run(
+        &reed_cpu,
+        reed_cpu.q_function_by_name("Vector3MassApply").unwrap(),
+    );
+    let v_gpu = run(&reed_gpu, qf_gpu);
+    for (a, b) in v_cpu.iter().zip(v_gpu.iter()) {
+        assert!((a - b).abs() < 1.5e-3, "cpu={a} gpu={b}");
+    }
+}
+
+/// Poisson apply uses [`reed_wgpu::Poisson1DApplyF32Wgpu`] (same WGSL multiply as mass apply).
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_operator_poisson1d_gpu_poisson_qfunction_matches_cpu() {
+    let rt = reed_wgpu::WgpuBackend::<f32>::new()
+        .gpu_runtime()
+        .expect("wgpu runtime");
+    let qf_gpu = Box::new(
+        reed_wgpu::Poisson1DApplyF32Wgpu::new(rt).expect("Poisson1DApplyF32Wgpu::new"),
+    );
+
+    let run = |reed: &Reed<f32>, qf: Box<dyn QFunctionTrait<f32>>| -> Vec<f32> {
+        let nelem = 2usize;
+        let p = 2usize;
+        let q = 2usize;
+        let ndofs = nelem + 1;
+
+        let node_coords = vec![-1.0_f32, 0.0, 1.0];
+        let x_coord = reed.vector_from_slice(&node_coords).unwrap();
+        let mut qdata = reed.vector(nelem * q).unwrap();
+        qdata.set_value(0.0_f32).unwrap();
+
+        let ind_x = vec![0, 1, 1, 2];
+        let ind_u = ind_x.clone();
+
+        let r_x = reed
+            .elem_restriction(nelem, 2, 1, 1, ndofs, &ind_x)
+            .unwrap();
+        let r_u = reed
+            .elem_restriction(nelem, p, 1, 1, ndofs, &ind_u)
+            .unwrap();
+        let r_q = reed
+            .strided_elem_restriction(nelem, q, 1, nelem * q, [1, q as i32, q as i32])
+            .unwrap();
+
+        let b_x = reed
+            .basis_tensor_h1_lagrange(1, 1, 2, q, QuadMode::Gauss)
+            .unwrap();
+        let b_u = reed
+            .basis_tensor_h1_lagrange(1, 1, p, q, QuadMode::Gauss)
+            .unwrap();
+
+        let build_poisson = reed
+            .operator_builder()
+            .qfunction(reed.q_function_by_name("Poisson1DBuild").unwrap())
+            .field("dx", Some(&*r_x), Some(&*b_x), FieldVector::Active)
+            .field("weights", None, Some(&*b_x), FieldVector::None)
+            .field("qdata", Some(&*r_q), None, FieldVector::Active)
+            .build()
+            .unwrap();
+        build_poisson.apply(&*x_coord, &mut *qdata).unwrap();
+
+        let op_poisson = reed
+            .operator_builder()
+            .qfunction(qf)
+            .field("du", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+            .field("qdata", Some(&*r_q), None, FieldVector::Passive(&*qdata))
+            .field("dv", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+            .build()
+            .unwrap();
+
+        let u = reed.vector_from_slice(&[0.0_f32, 1.0, 0.0]).unwrap();
+        let mut v = reed.vector(ndofs).unwrap();
+        v.set_value(0.0_f32).unwrap();
+        op_poisson.apply(&*u, &mut *v).unwrap();
+
+        let mut values = vec![0.0_f32; ndofs];
+        v.copy_to_slice(&mut values).unwrap();
+        values
+    };
+
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let v_cpu = run(
+        &reed_cpu,
+        reed_cpu.q_function_by_name("Poisson1DApply").unwrap(),
+    );
+    let v_gpu = run(&reed_gpu, qf_gpu);
+    let expected = [-1.0_f32, 2.0, -1.0];
+    for ((a, b), e) in v_cpu.iter().zip(v_gpu.iter()).zip(expected.iter()) {
+        assert!((a - b).abs() < 5.0e-4, "cpu={a} gpu={b}");
+        assert!((a - e).abs() < 2.0e-3, "cpu={a} ref={e}");
+        assert!((b - e).abs() < 2.0e-3, "gpu={b} ref={e}");
+    }
+}
+
+/// 1D Poisson with two stacked scalar components (`compstride = ndofs`); device QF reuses vector2-mass WGSL.
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_operator_poisson1d_vector2_gpu_qfunction_matches_cpu() {
+    let rt = reed_wgpu::WgpuBackend::<f32>::new()
+        .gpu_runtime()
+        .expect("wgpu runtime");
+    let qf_gpu = Box::new(
+        reed_wgpu::Vector2Poisson1DApplyF32Wgpu::new(rt).expect("Vector2Poisson1DApplyF32Wgpu::new"),
+    );
+
+    let run = |reed: &Reed<f32>, qf: Box<dyn QFunctionTrait<f32>>| -> Vec<f32> {
+        let nelem = 2usize;
+        let p = 2usize;
+        let q = 2usize;
+        let ndofs = nelem + 1;
+
+        let node_coords = vec![-1.0_f32, 0.0, 1.0];
+        let x_coord = reed.vector_from_slice(&node_coords).unwrap();
+        let mut qdata = reed.vector(nelem * q).unwrap();
+        qdata.set_value(0.0_f32).unwrap();
+
+        let ind_x = vec![0, 1, 1, 2];
+        let ind_u = ind_x.clone();
+
+        let r_x = reed
+            .elem_restriction(nelem, 2, 1, 1, ndofs, &ind_x)
+            .unwrap();
+        let r_u = reed
+            .elem_restriction(nelem, p, 2, ndofs, 2 * ndofs, &ind_u)
+            .unwrap();
+        let r_q = reed
+            .strided_elem_restriction(nelem, q, 1, nelem * q, [1, q as i32, q as i32])
+            .unwrap();
+
+        let b_x = reed
+            .basis_tensor_h1_lagrange(1, 1, 2, q, QuadMode::Gauss)
+            .unwrap();
+        let b_u = reed
+            .basis_tensor_h1_lagrange(1, 2, p, q, QuadMode::Gauss)
+            .unwrap();
+
+        let build_poisson = reed
+            .operator_builder()
+            .qfunction(reed.q_function_by_name("Poisson1DBuild").unwrap())
+            .field("dx", Some(&*r_x), Some(&*b_x), FieldVector::Active)
+            .field("weights", None, Some(&*b_x), FieldVector::None)
+            .field("qdata", Some(&*r_q), None, FieldVector::Active)
+            .build()
+            .unwrap();
+        build_poisson.apply(&*x_coord, &mut *qdata).unwrap();
+
+        let op_poisson = reed
+            .operator_builder()
+            .qfunction(qf)
+            .field("du", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+            .field("qdata", Some(&*r_q), None, FieldVector::Passive(&*qdata))
+            .field("dv", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+            .build()
+            .unwrap();
+
+        // Block layout: first `ndofs` entries component 0, then component 1 (match `elem_restriction` compstride).
+        let u = reed
+            .vector_from_slice(&[0.0_f32, 1.0, 0.0, 0.5_f32, -0.5, 0.0])
+            .unwrap();
+        let mut v = reed.vector(2 * ndofs).unwrap();
+        v.set_value(0.0_f32).unwrap();
+        op_poisson.apply(&*u, &mut *v).unwrap();
+
+        let mut values = vec![0.0_f32; 2 * ndofs];
+        v.copy_to_slice(&mut values).unwrap();
+        values
+    };
+
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let v_cpu = run(
+        &reed_cpu,
+        reed_cpu
+            .q_function_by_name("Vector2Poisson1DApply")
+            .unwrap(),
+    );
+    let v_gpu = run(&reed_gpu, qf_gpu);
+    for (a, b) in v_cpu.iter().zip(v_gpu.iter()) {
+        assert!((a - b).abs() < 5.0e-4, "cpu={a} gpu={b}");
+    }
+}
+
+/// 2D tensor cell + `Poisson2DBuild` / [`reed_wgpu::Poisson2DApplyF32Wgpu`] vs CPU gallery (`examples/poisson.rs` layout).
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_operator_poisson2d_gpu_poisson_qfunction_matches_cpu() {
+    fn build_offsets_2d(nelem_1d: usize, p: usize, ndofs_1d: usize) -> Vec<i32> {
+        let mut offsets = Vec::with_capacity(nelem_1d * nelem_1d * p * p);
+        for ey in 0..nelem_1d {
+            for ex in 0..nelem_1d {
+                let sy = ey * (p - 1);
+                let sx = ex * (p - 1);
+                for jy in 0..p {
+                    for jx in 0..p {
+                        let gi = (sy + jy) * ndofs_1d + (sx + jx);
+                        offsets.push(gi as i32);
+                    }
+                }
+            }
+        }
+        offsets
+    }
+
+    let rt = reed_wgpu::WgpuBackend::<f32>::new()
+        .gpu_runtime()
+        .expect("wgpu runtime");
+    let qf_gpu = Box::new(
+        reed_wgpu::Poisson2DApplyF32Wgpu::new(rt).expect("Poisson2DApplyF32Wgpu::new"),
+    );
+
+    let run = |reed: &Reed<f32>, qf: Box<dyn QFunctionTrait<f32>>| -> Vec<f32> {
+        let dim = 2usize;
+        let nelem_1d = 1usize;
+        let p = 2usize;
+        let q = 2usize;
+        let ndofs_1d = nelem_1d * (p - 1) + 1;
+        let nelem = nelem_1d.pow(dim as u32);
+        let ndofs = ndofs_1d.pow(dim as u32);
+        let qpts_per_elem = q.pow(dim as u32);
+        let elemsize = p.pow(dim as u32);
+        let qdata_comp = dim * dim;
+
+        let offsets = build_offsets_2d(nelem_1d, p, ndofs_1d);
+        let x_coords: Vec<f32> = vec![-1.0, 1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0];
+        let x_coord = reed.vector_from_slice(&x_coords).unwrap();
+
+        let r_q = reed
+            .strided_elem_restriction(
+                nelem,
+                qpts_per_elem,
+                qdata_comp,
+                nelem * qpts_per_elem * qdata_comp,
+                [1, qpts_per_elem as i32, (qpts_per_elem * qdata_comp) as i32],
+            )
+            .unwrap();
+        let mut qdata = reed.vector(nelem * qpts_per_elem * qdata_comp).unwrap();
+        qdata.set_value(0.0_f32).unwrap();
+
+        let r_x = reed
+            .elem_restriction(nelem, elemsize, dim, ndofs, dim * ndofs, &offsets)
+            .unwrap();
+        let r_u = reed
+            .elem_restriction(nelem, elemsize, 1, 1, ndofs, &offsets)
+            .unwrap();
+
+        let b_x = reed
+            .basis_tensor_h1_lagrange(dim, dim, p, q, QuadMode::Gauss)
+            .unwrap();
+        let b_u = reed
+            .basis_tensor_h1_lagrange(dim, 1, p, q, QuadMode::Gauss)
+            .unwrap();
+
+        let build = reed
+            .operator_builder()
+            .qfunction(reed.q_function_by_name("Poisson2DBuild").unwrap())
+            .field("dx", Some(&*r_x), Some(&*b_x), FieldVector::Active)
+            .field("weights", None, Some(&*b_x), FieldVector::None)
+            .field("qdata", Some(&*r_q), None, FieldVector::Active)
+            .build()
+            .unwrap();
+        build.apply(&*x_coord, &mut *qdata).unwrap();
+
+        let op = reed
+            .operator_builder()
+            .qfunction(qf)
+            .field("du", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+            .field("qdata", Some(&*r_q), None, FieldVector::Passive(&*qdata))
+            .field("dv", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+            .build()
+            .unwrap();
+
+        // Scalar potential nodal values x + y on the 2×2 mesh (`examples/poisson.rs`).
+        let u = reed
+            .vector_from_slice(&[-2.0_f32, 0.0, 0.0, 2.0])
+            .unwrap();
+        let mut v = reed.vector(ndofs).unwrap();
+        v.set_value(0.0_f32).unwrap();
+        op.apply(&*u, &mut *v).unwrap();
+
+        let mut values = vec![0.0_f32; ndofs];
+        v.copy_to_slice(&mut values).unwrap();
+        values
+    };
+
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let v_cpu = run(
+        &reed_cpu,
+        reed_cpu.q_function_by_name("Poisson2DApply").unwrap(),
+    );
+    let v_gpu = run(&reed_gpu, qf_gpu);
+    for (a, b) in v_cpu.iter().zip(v_gpu.iter()) {
+        assert!((a - b).abs() < 2.0e-3, "cpu={a} gpu={b}");
+    }
+}
+
+/// 2D cell + `Poisson2DBuild` + two-component field + [`reed_wgpu::Vector2Poisson2DApplyF32Wgpu`].
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_operator_poisson2d_vector2_poisson2d_gpu_qfunction_matches_cpu() {
+    fn build_offsets_2d(nelem_1d: usize, p: usize, ndofs_1d: usize) -> Vec<i32> {
+        let mut offsets = Vec::with_capacity(nelem_1d * nelem_1d * p * p);
+        for ey in 0..nelem_1d {
+            for ex in 0..nelem_1d {
+                let sy = ey * (p - 1);
+                let sx = ex * (p - 1);
+                for jy in 0..p {
+                    for jx in 0..p {
+                        let gi = (sy + jy) * ndofs_1d + (sx + jx);
+                        offsets.push(gi as i32);
+                    }
+                }
+            }
+        }
+        offsets
+    }
+
+    let rt = reed_wgpu::WgpuBackend::<f32>::new()
+        .gpu_runtime()
+        .expect("wgpu runtime");
+    let qf_gpu = Box::new(
+        reed_wgpu::Vector2Poisson2DApplyF32Wgpu::new(rt).expect("Vector2Poisson2DApplyF32Wgpu::new"),
+    );
+
+    let run = |reed: &Reed<f32>, qf: Box<dyn QFunctionTrait<f32>>| -> Vec<f32> {
+        let dim = 2usize;
+        let nelem_1d = 1usize;
+        let p = 2usize;
+        let q = 2usize;
+        let ndofs_1d = nelem_1d * (p - 1) + 1;
+        let nelem = nelem_1d.pow(dim as u32);
+        let ndofs = ndofs_1d.pow(dim as u32);
+        let qpts_per_elem = q.pow(dim as u32);
+        let elemsize = p.pow(dim as u32);
+        let qdata_comp = dim * dim;
+
+        let offsets = build_offsets_2d(nelem_1d, p, ndofs_1d);
+        let x_coords: Vec<f32> = vec![-1.0, 1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0];
+        let x_coord = reed.vector_from_slice(&x_coords).unwrap();
+
+        let r_q = reed
+            .strided_elem_restriction(
+                nelem,
+                qpts_per_elem,
+                qdata_comp,
+                nelem * qpts_per_elem * qdata_comp,
+                [1, qpts_per_elem as i32, (qpts_per_elem * qdata_comp) as i32],
+            )
+            .unwrap();
+        let mut qdata = reed.vector(nelem * qpts_per_elem * qdata_comp).unwrap();
+        qdata.set_value(0.0_f32).unwrap();
+
+        let r_x = reed
+            .elem_restriction(nelem, elemsize, dim, ndofs, dim * ndofs, &offsets)
+            .unwrap();
+        let r_u = reed
+            .elem_restriction(nelem, elemsize, 2, ndofs, 2 * ndofs, &offsets)
+            .unwrap();
+
+        let b_x = reed
+            .basis_tensor_h1_lagrange(dim, dim, p, q, QuadMode::Gauss)
+            .unwrap();
+        let b_u = reed
+            .basis_tensor_h1_lagrange(dim, 2, p, q, QuadMode::Gauss)
+            .unwrap();
+
+        let build = reed
+            .operator_builder()
+            .qfunction(reed.q_function_by_name("Poisson2DBuild").unwrap())
+            .field("dx", Some(&*r_x), Some(&*b_x), FieldVector::Active)
+            .field("weights", None, Some(&*b_x), FieldVector::None)
+            .field("qdata", Some(&*r_q), None, FieldVector::Active)
+            .build()
+            .unwrap();
+        build.apply(&*x_coord, &mut *qdata).unwrap();
+
+        let op = reed
+            .operator_builder()
+            .qfunction(qf)
+            .field("du", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+            .field("qdata", Some(&*r_q), None, FieldVector::Passive(&*qdata))
+            .field("dv", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+            .build()
+            .unwrap();
+
+        let u = reed
+            .vector_from_slice(&[
+                -2.0_f32, 0.0, 0.0, 2.0, 1.0, -1.0, 0.5, -0.5,
+            ])
+            .unwrap();
+        let mut v = reed.vector(2 * ndofs).unwrap();
+        v.set_value(0.0_f32).unwrap();
+        op.apply(&*u, &mut *v).unwrap();
+
+        let mut values = vec![0.0_f32; 2 * ndofs];
+        v.copy_to_slice(&mut values).unwrap();
+        values
+    };
+
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let v_cpu = run(
+        &reed_cpu,
+        reed_cpu
+            .q_function_by_name("Vector2Poisson2DApply")
+            .unwrap(),
+    );
+    let v_gpu = run(&reed_gpu, qf_gpu);
+    for (a, b) in v_cpu.iter().zip(v_gpu.iter()) {
+        assert!((a - b).abs() < 2.5e-3, "cpu={a} gpu={b}");
+    }
+}
+
+/// Same mesh + three stacked 2D Poisson components + [`reed_wgpu::Vector3Poisson2DApplyF32Wgpu`].
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_operator_poisson2d_vector3_poisson2d_gpu_qfunction_matches_cpu() {
+    fn build_offsets_2d(nelem_1d: usize, p: usize, ndofs_1d: usize) -> Vec<i32> {
+        let mut offsets = Vec::with_capacity(nelem_1d * nelem_1d * p * p);
+        for ey in 0..nelem_1d {
+            for ex in 0..nelem_1d {
+                let sy = ey * (p - 1);
+                let sx = ex * (p - 1);
+                for jy in 0..p {
+                    for jx in 0..p {
+                        let gi = (sy + jy) * ndofs_1d + (sx + jx);
+                        offsets.push(gi as i32);
+                    }
+                }
+            }
+        }
+        offsets
+    }
+
+    let rt = reed_wgpu::WgpuBackend::<f32>::new()
+        .gpu_runtime()
+        .expect("wgpu runtime");
+    let qf_gpu = Box::new(
+        reed_wgpu::Vector3Poisson2DApplyF32Wgpu::new(rt).expect("Vector3Poisson2DApplyF32Wgpu::new"),
+    );
+
+    let run = |reed: &Reed<f32>, qf: Box<dyn QFunctionTrait<f32>>| -> Vec<f32> {
+        let dim = 2usize;
+        let nelem_1d = 1usize;
+        let p = 2usize;
+        let q = 2usize;
+        let ndofs_1d = nelem_1d * (p - 1) + 1;
+        let nelem = nelem_1d.pow(dim as u32);
+        let ndofs = ndofs_1d.pow(dim as u32);
+        let qpts_per_elem = q.pow(dim as u32);
+        let elemsize = p.pow(dim as u32);
+        let qdata_comp = dim * dim;
+
+        let offsets = build_offsets_2d(nelem_1d, p, ndofs_1d);
+        let x_coords: Vec<f32> = vec![-1.0, 1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 1.0];
+        let x_coord = reed.vector_from_slice(&x_coords).unwrap();
+
+        let r_q = reed
+            .strided_elem_restriction(
+                nelem,
+                qpts_per_elem,
+                qdata_comp,
+                nelem * qpts_per_elem * qdata_comp,
+                [1, qpts_per_elem as i32, (qpts_per_elem * qdata_comp) as i32],
+            )
+            .unwrap();
+        let mut qdata = reed.vector(nelem * qpts_per_elem * qdata_comp).unwrap();
+        qdata.set_value(0.0_f32).unwrap();
+
+        let r_x = reed
+            .elem_restriction(nelem, elemsize, dim, ndofs, dim * ndofs, &offsets)
+            .unwrap();
+        let r_u = reed
+            .elem_restriction(nelem, elemsize, 3, ndofs, 3 * ndofs, &offsets)
+            .unwrap();
+
+        let b_x = reed
+            .basis_tensor_h1_lagrange(dim, dim, p, q, QuadMode::Gauss)
+            .unwrap();
+        let b_u = reed
+            .basis_tensor_h1_lagrange(dim, 3, p, q, QuadMode::Gauss)
+            .unwrap();
+
+        let build = reed
+            .operator_builder()
+            .qfunction(reed.q_function_by_name("Poisson2DBuild").unwrap())
+            .field("dx", Some(&*r_x), Some(&*b_x), FieldVector::Active)
+            .field("weights", None, Some(&*b_x), FieldVector::None)
+            .field("qdata", Some(&*r_q), None, FieldVector::Active)
+            .build()
+            .unwrap();
+        build.apply(&*x_coord, &mut *qdata).unwrap();
+
+        let op = reed
+            .operator_builder()
+            .qfunction(qf)
+            .field("du", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+            .field("qdata", Some(&*r_q), None, FieldVector::Passive(&*qdata))
+            .field("dv", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+            .build()
+            .unwrap();
+
+        let u = reed
+            .vector_from_slice(&[
+                -2.0_f32, 0.0, 0.0, 2.0, 1.0, -1.0, 0.5, -0.5, 0.25, 0.25, -0.25, -0.25,
+            ])
+            .unwrap();
+        let mut v = reed.vector(3 * ndofs).unwrap();
+        v.set_value(0.0_f32).unwrap();
+        op.apply(&*u, &mut *v).unwrap();
+
+        let mut values = vec![0.0_f32; 3 * ndofs];
+        v.copy_to_slice(&mut values).unwrap();
+        values
+    };
+
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let v_cpu = run(
+        &reed_cpu,
+        reed_cpu
+            .q_function_by_name("Vector3Poisson2DApply")
+            .unwrap(),
+    );
+    let v_gpu = run(&reed_gpu, qf_gpu);
+    for (a, b) in v_cpu.iter().zip(v_gpu.iter()) {
+        assert!((a - b).abs() < 2.5e-3, "cpu={a} gpu={b}");
+    }
+}
+
+/// Single hex + `Poisson3DBuild` / [`reed_wgpu::Poisson3DApplyF32Wgpu`] vs CPU (`examples/poisson.rs` 3D layout).
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_operator_poisson3d_gpu_poisson_qfunction_matches_cpu() {
+    fn build_offsets_3d(nelem_1d: usize, p: usize, ndofs_1d: usize) -> Vec<i32> {
+        let mut offsets = Vec::with_capacity(nelem_1d.pow(3) * p.pow(3));
+        for ez in 0..nelem_1d {
+            for ey in 0..nelem_1d {
+                for ex in 0..nelem_1d {
+                    let sz = ez * (p - 1);
+                    let sy = ey * (p - 1);
+                    let sx = ex * (p - 1);
+                    for jz in 0..p {
+                        for jy in 0..p {
+                            for jx in 0..p {
+                                let gi = ((sz + jz) * ndofs_1d + (sy + jy)) * ndofs_1d + (sx + jx);
+                                offsets.push(gi as i32);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        offsets
+    }
+
+    fn build_coords_dim3_f32(ndofs_1d: usize) -> Vec<f32> {
+        let ndofs = ndofs_1d.pow(3);
+        let mut out = vec![0.0_f32; 3 * ndofs];
+        let denom = (ndofs_1d.saturating_sub(1).max(1)) as f32;
+        for iz in 0..ndofs_1d {
+            for iy in 0..ndofs_1d {
+                for ix in 0..ndofs_1d {
+                    let i = (iz * ndofs_1d + iy) * ndofs_1d + ix;
+                    out[i] = -1.0 + 2.0 * ix as f32 / denom;
+                    out[ndofs + i] = -1.0 + 2.0 * iy as f32 / denom;
+                    out[2 * ndofs + i] = -1.0 + 2.0 * iz as f32 / denom;
+                }
+            }
+        }
+        out
+    }
+
+    let rt = reed_wgpu::WgpuBackend::<f32>::new()
+        .gpu_runtime()
+        .expect("wgpu runtime");
+    let qf_gpu = Box::new(
+        reed_wgpu::Poisson3DApplyF32Wgpu::new(rt).expect("Poisson3DApplyF32Wgpu::new"),
+    );
+
+    let run = |reed: &Reed<f32>, qf: Box<dyn QFunctionTrait<f32>>| -> Vec<f32> {
+        let dim = 3usize;
+        let nelem_1d = 1usize;
+        let p = 2usize;
+        let q = 2usize;
+        let ndofs_1d = nelem_1d * (p - 1) + 1;
+        let nelem = nelem_1d.pow(dim as u32);
+        let ndofs = ndofs_1d.pow(dim as u32);
+        let qpts_per_elem = q.pow(dim as u32);
+        let elemsize = p.pow(dim as u32);
+        let qdata_comp = dim * dim;
+
+        let offsets = build_offsets_3d(nelem_1d, p, ndofs_1d);
+        let x_coords = build_coords_dim3_f32(ndofs_1d);
+        let x_coord = reed.vector_from_slice(&x_coords).unwrap();
+
+        let r_q = reed
+            .strided_elem_restriction(
+                nelem,
+                qpts_per_elem,
+                qdata_comp,
+                nelem * qpts_per_elem * qdata_comp,
+                [1, qpts_per_elem as i32, (qpts_per_elem * qdata_comp) as i32],
+            )
+            .unwrap();
+        let mut qdata = reed.vector(nelem * qpts_per_elem * qdata_comp).unwrap();
+        qdata.set_value(0.0_f32).unwrap();
+
+        let r_x = reed
+            .elem_restriction(nelem, elemsize, dim, ndofs, dim * ndofs, &offsets)
+            .unwrap();
+        let r_u = reed
+            .elem_restriction(nelem, elemsize, 1, 1, ndofs, &offsets)
+            .unwrap();
+
+        let b_x = reed
+            .basis_tensor_h1_lagrange(dim, dim, p, q, QuadMode::Gauss)
+            .unwrap();
+        let b_u = reed
+            .basis_tensor_h1_lagrange(dim, 1, p, q, QuadMode::Gauss)
+            .unwrap();
+
+        let build = reed
+            .operator_builder()
+            .qfunction(reed.q_function_by_name("Poisson3DBuild").unwrap())
+            .field("dx", Some(&*r_x), Some(&*b_x), FieldVector::Active)
+            .field("weights", None, Some(&*b_x), FieldVector::None)
+            .field("qdata", Some(&*r_q), None, FieldVector::Active)
+            .build()
+            .unwrap();
+        build.apply(&*x_coord, &mut *qdata).unwrap();
+
+        let op = reed
+            .operator_builder()
+            .qfunction(qf)
+            .field("du", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+            .field("qdata", Some(&*r_q), None, FieldVector::Passive(&*qdata))
+            .field("dv", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+            .build()
+            .unwrap();
+
+        let mut u_nodal = vec![0.0_f32; ndofs];
+        for i in 0..ndofs {
+            u_nodal[i] = x_coords[i] + x_coords[ndofs + i] + x_coords[2 * ndofs + i];
+        }
+        let u = reed.vector_from_slice(&u_nodal).unwrap();
+        let mut v = reed.vector(ndofs).unwrap();
+        v.set_value(0.0_f32).unwrap();
+        op.apply(&*u, &mut *v).unwrap();
+
+        let mut values = vec![0.0_f32; ndofs];
+        v.copy_to_slice(&mut values).unwrap();
+        values
+    };
+
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let v_cpu = run(
+        &reed_cpu,
+        reed_cpu.q_function_by_name("Poisson3DApply").unwrap(),
+    );
+    let v_gpu = run(&reed_gpu, qf_gpu);
+    for (a, b) in v_cpu.iter().zip(v_gpu.iter()) {
+        assert!((a - b).abs() < 3.0e-3, "cpu={a} gpu={b}");
+    }
+}
+
+/// `apply_add` must preserve existing `v` and accumulate the mass action (scatter uses `+=`).
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_operator_mass1d_apply_add_matches_cpu() {
+    let run = |reed: &Reed<f32>| -> Vec<f32> {
+        let nelem = 2usize;
+        let p = 2usize;
+        let q = 2usize;
+        let ndofs = nelem + 1;
+
+        let node_coords = vec![-1.0_f32, 0.0, 1.0];
+        let x_coord = reed.vector_from_slice(&node_coords).unwrap();
+        let mut qdata = reed.vector(nelem * q).unwrap();
+        qdata.set_value(0.0_f32).unwrap();
+
+        let ind_x = vec![0, 1, 1, 2];
+        let ind_u = ind_x.clone();
+
+        let r_x = reed
+            .elem_restriction(nelem, 2, 1, 1, ndofs, &ind_x)
+            .unwrap();
+        let r_u = reed
+            .elem_restriction(nelem, p, 1, 1, ndofs, &ind_u)
+            .unwrap();
+        let r_q = reed
+            .strided_elem_restriction(nelem, q, 1, nelem * q, [1, q as i32, q as i32])
+            .unwrap();
+
+        let b_x = reed
+            .basis_tensor_h1_lagrange(1, 1, 2, q, QuadMode::Gauss)
+            .unwrap();
+        let b_u = reed
+            .basis_tensor_h1_lagrange(1, 1, p, q, QuadMode::Gauss)
+            .unwrap();
+
+        let build = reed
+            .operator_builder()
+            .qfunction(reed.q_function_by_name("Mass1DBuild").unwrap())
+            .field("dx", Some(&*r_x), Some(&*b_x), FieldVector::Active)
+            .field("weights", None, Some(&*b_x), FieldVector::None)
+            .field("qdata", Some(&*r_q), None, FieldVector::Active)
+            .build()
+            .unwrap();
+        build.apply(&*x_coord, &mut *qdata).unwrap();
+
+        let op_mass = reed
+            .operator_builder()
+            .qfunction(reed.q_function_by_name("MassApply").unwrap())
+            .field("u", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+            .field("qdata", Some(&*r_q), None, FieldVector::Passive(&*qdata))
+            .field("v", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+            .build()
+            .unwrap();
+
+        let u = reed.vector_from_slice(&vec![1.0_f32; ndofs]).unwrap();
+        let mut v = reed.vector(ndofs).unwrap();
+        v.set_value(0.5_f32).unwrap();
+        op_mass.apply_add(&*u, &mut *v).unwrap();
+
+        let mut values = vec![0.0_f32; ndofs];
+        v.copy_to_slice(&mut values).unwrap();
+        values
+    };
+
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let v_cpu = run(&reed_cpu);
+    let v_gpu = run(&reed_gpu);
+    for (a, b) in v_cpu.iter().zip(v_gpu.iter()) {
+        assert!((a - b).abs() < 5.0e-4, "cpu={a} gpu={b}");
+    }
+}
+
+/// `CpuOperator::linear_assemble_diagonal` uses internal `CpuVector` matvecs; the assembled vector
+/// may be backend `reed.vector` (host staging on WGPU). Restriction/basis still run on GPU when
+/// the operator was built under `/gpu/wgpu`.
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_operator_mass1d_linear_assemble_diagonal_matches_cpu() {
+    let run = |reed: &Reed<f32>| -> Vec<f32> {
+        let nelem = 2usize;
+        let p = 2usize;
+        let q = 2usize;
+        let ndofs = nelem + 1;
+
+        let node_coords = vec![-1.0_f32, 0.0, 1.0];
+        let x_coord = reed.vector_from_slice(&node_coords).unwrap();
+        let mut qdata = reed.vector(nelem * q).unwrap();
+        qdata.set_value(0.0_f32).unwrap();
+
+        let ind_x = vec![0, 1, 1, 2];
+        let ind_u = ind_x.clone();
+
+        let r_x = reed
+            .elem_restriction(nelem, 2, 1, 1, ndofs, &ind_x)
+            .unwrap();
+        let r_u = reed
+            .elem_restriction(nelem, p, 1, 1, ndofs, &ind_u)
+            .unwrap();
+        let r_q = reed
+            .strided_elem_restriction(nelem, q, 1, nelem * q, [1, q as i32, q as i32])
+            .unwrap();
+
+        let b_x = reed
+            .basis_tensor_h1_lagrange(1, 1, 2, q, QuadMode::Gauss)
+            .unwrap();
+        let b_u = reed
+            .basis_tensor_h1_lagrange(1, 1, p, q, QuadMode::Gauss)
+            .unwrap();
+
+        let build = reed
+            .operator_builder()
+            .qfunction(reed.q_function_by_name("Mass1DBuild").unwrap())
+            .field("dx", Some(&*r_x), Some(&*b_x), FieldVector::Active)
+            .field("weights", None, Some(&*b_x), FieldVector::None)
+            .field("qdata", Some(&*r_q), None, FieldVector::Active)
+            .build()
+            .unwrap();
+        build.apply(&*x_coord, &mut *qdata).unwrap();
+
+        let op_mass = reed
+            .operator_builder()
+            .qfunction(reed.q_function_by_name("MassApply").unwrap())
+            .field("u", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+            .field("qdata", Some(&*r_q), None, FieldVector::Passive(&*qdata))
+            .field("v", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+            .build()
+            .unwrap();
+
+        let mut d = reed.vector(ndofs).unwrap();
+        op_mass.linear_assemble_diagonal(&mut *d).unwrap();
+
+        let mut out = vec![0.0_f32; ndofs];
+        d.copy_to_slice(&mut out).unwrap();
+        out
+    };
+
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let d_cpu = run(&reed_cpu);
+    let d_gpu = run(&reed_gpu);
+    for (a, b) in d_cpu.iter().zip(d_gpu.iter()) {
+        assert!((a - b).abs() < 5.0e-4, "cpu={a} gpu={b}");
+    }
+}
+
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_operator_poisson1d_apply_matches_cpu() {
+    let run = |reed: &Reed<f32>| -> Vec<f32> {
+        let nelem = 2usize;
+        let p = 2usize;
+        let q = 2usize;
+        let ndofs = nelem + 1;
+
+        let node_coords = vec![-1.0_f32, 0.0, 1.0];
+        let x_coord = reed.vector_from_slice(&node_coords).unwrap();
+        let mut qdata = reed.vector(nelem * q).unwrap();
+        qdata.set_value(0.0_f32).unwrap();
+
+        let ind_x = vec![0, 1, 1, 2];
+        let ind_u = ind_x.clone();
+
+        let r_x = reed
+            .elem_restriction(nelem, 2, 1, 1, ndofs, &ind_x)
+            .unwrap();
+        let r_u = reed
+            .elem_restriction(nelem, p, 1, 1, ndofs, &ind_u)
+            .unwrap();
+        let r_q = reed
+            .strided_elem_restriction(nelem, q, 1, nelem * q, [1, q as i32, q as i32])
+            .unwrap();
+
+        let b_x = reed
+            .basis_tensor_h1_lagrange(1, 1, 2, q, QuadMode::Gauss)
+            .unwrap();
+        let b_u = reed
+            .basis_tensor_h1_lagrange(1, 1, p, q, QuadMode::Gauss)
+            .unwrap();
+
+        let build_poisson = reed
+            .operator_builder()
+            .qfunction(reed.q_function_by_name("Poisson1DBuild").unwrap())
+            .field("dx", Some(&*r_x), Some(&*b_x), FieldVector::Active)
+            .field("weights", None, Some(&*b_x), FieldVector::None)
+            .field("qdata", Some(&*r_q), None, FieldVector::Active)
+            .build()
+            .unwrap();
+        build_poisson.apply(&*x_coord, &mut *qdata).unwrap();
+
+        let op_poisson = reed
+            .operator_builder()
+            .qfunction(reed.q_function_by_name("Poisson1DApply").unwrap())
+            .field("du", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+            .field("qdata", Some(&*r_q), None, FieldVector::Passive(&*qdata))
+            .field("dv", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+            .build()
+            .unwrap();
+
+        let u = reed.vector_from_slice(&[0.0_f32, 1.0, 0.0]).unwrap();
+        let mut v = reed.vector(ndofs).unwrap();
+        v.set_value(0.0_f32).unwrap();
+        op_poisson.apply(&*u, &mut *v).unwrap();
+
+        let mut values = vec![0.0_f32; ndofs];
+        v.copy_to_slice(&mut values).unwrap();
+        values
+    };
+
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let v_cpu = run(&reed_cpu);
+    let v_gpu = run(&reed_gpu);
+    let expected = [-1.0_f32, 2.0, -1.0];
+    for ((a, b), e) in v_cpu.iter().zip(v_gpu.iter()).zip(expected.iter()) {
+        assert!((a - b).abs() < 5.0e-4, "cpu={a} gpu={b}");
+        assert!((a - e).abs() < 2.0e-3, "cpu={a} ref={e}");
+        assert!((b - e).abs() < 2.0e-3, "gpu={b} ref={e}");
+    }
+}
+
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_operator_poisson1d_apply_add_matches_cpu() {
+    let run = |reed: &Reed<f32>| -> Vec<f32> {
+        let nelem = 2usize;
+        let p = 2usize;
+        let q = 2usize;
+        let ndofs = nelem + 1;
+
+        let node_coords = vec![-1.0_f32, 0.0, 1.0];
+        let x_coord = reed.vector_from_slice(&node_coords).unwrap();
+        let mut qdata = reed.vector(nelem * q).unwrap();
+        qdata.set_value(0.0_f32).unwrap();
+
+        let ind_x = vec![0, 1, 1, 2];
+        let ind_u = ind_x.clone();
+
+        let r_x = reed
+            .elem_restriction(nelem, 2, 1, 1, ndofs, &ind_x)
+            .unwrap();
+        let r_u = reed
+            .elem_restriction(nelem, p, 1, 1, ndofs, &ind_u)
+            .unwrap();
+        let r_q = reed
+            .strided_elem_restriction(nelem, q, 1, nelem * q, [1, q as i32, q as i32])
+            .unwrap();
+
+        let b_x = reed
+            .basis_tensor_h1_lagrange(1, 1, 2, q, QuadMode::Gauss)
+            .unwrap();
+        let b_u = reed
+            .basis_tensor_h1_lagrange(1, 1, p, q, QuadMode::Gauss)
+            .unwrap();
+
+        let build_poisson = reed
+            .operator_builder()
+            .qfunction(reed.q_function_by_name("Poisson1DBuild").unwrap())
+            .field("dx", Some(&*r_x), Some(&*b_x), FieldVector::Active)
+            .field("weights", None, Some(&*b_x), FieldVector::None)
+            .field("qdata", Some(&*r_q), None, FieldVector::Active)
+            .build()
+            .unwrap();
+        build_poisson.apply(&*x_coord, &mut *qdata).unwrap();
+
+        let op_poisson = reed
+            .operator_builder()
+            .qfunction(reed.q_function_by_name("Poisson1DApply").unwrap())
+            .field("du", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+            .field("qdata", Some(&*r_q), None, FieldVector::Passive(&*qdata))
+            .field("dv", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+            .build()
+            .unwrap();
+
+        let u = reed.vector_from_slice(&[0.0_f32, 1.0, 0.0]).unwrap();
+        let mut v = reed.vector(ndofs).unwrap();
+        v.set_value(0.25_f32).unwrap();
+        op_poisson.apply_add(&*u, &mut *v).unwrap();
+
+        let mut values = vec![0.0_f32; ndofs];
+        v.copy_to_slice(&mut values).unwrap();
+        values
+    };
+
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let v_cpu = run(&reed_cpu);
+    let v_gpu = run(&reed_gpu);
+    let expected = [-0.75_f32, 2.25, -0.75];
+    for ((a, b), e) in v_cpu.iter().zip(v_gpu.iter()).zip(expected.iter()) {
+        assert!((a - b).abs() < 5.0e-4, "cpu={a} gpu={b}");
+        assert!((a - e).abs() < 2.0e-3, "cpu={a} ref={e}");
+        assert!((b - e).abs() < 2.0e-3, "gpu={b} ref={e}");
+    }
+}
+
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_operator_poisson1d_linear_assemble_diagonal_matches_cpu() {
+    let run = |reed: &Reed<f32>| -> Vec<f32> {
+        let nelem = 2usize;
+        let p = 2usize;
+        let q = 2usize;
+        let ndofs = nelem + 1;
+
+        let node_coords = vec![-1.0_f32, 0.0, 1.0];
+        let x_coord = reed.vector_from_slice(&node_coords).unwrap();
+        let mut qdata = reed.vector(nelem * q).unwrap();
+        qdata.set_value(0.0_f32).unwrap();
+
+        let ind_x = vec![0, 1, 1, 2];
+        let ind_u = ind_x.clone();
+
+        let r_x = reed
+            .elem_restriction(nelem, 2, 1, 1, ndofs, &ind_x)
+            .unwrap();
+        let r_u = reed
+            .elem_restriction(nelem, p, 1, 1, ndofs, &ind_u)
+            .unwrap();
+        let r_q = reed
+            .strided_elem_restriction(nelem, q, 1, nelem * q, [1, q as i32, q as i32])
+            .unwrap();
+
+        let b_x = reed
+            .basis_tensor_h1_lagrange(1, 1, 2, q, QuadMode::Gauss)
+            .unwrap();
+        let b_u = reed
+            .basis_tensor_h1_lagrange(1, 1, p, q, QuadMode::Gauss)
+            .unwrap();
+
+        let build_poisson = reed
+            .operator_builder()
+            .qfunction(reed.q_function_by_name("Poisson1DBuild").unwrap())
+            .field("dx", Some(&*r_x), Some(&*b_x), FieldVector::Active)
+            .field("weights", None, Some(&*b_x), FieldVector::None)
+            .field("qdata", Some(&*r_q), None, FieldVector::Active)
+            .build()
+            .unwrap();
+        build_poisson.apply(&*x_coord, &mut *qdata).unwrap();
+
+        let op_poisson = reed
+            .operator_builder()
+            .qfunction(reed.q_function_by_name("Poisson1DApply").unwrap())
+            .field("du", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+            .field("qdata", Some(&*r_q), None, FieldVector::Passive(&*qdata))
+            .field("dv", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+            .build()
+            .unwrap();
+
+        let mut d = reed.vector(ndofs).unwrap();
+        op_poisson.linear_assemble_diagonal(&mut *d).unwrap();
+
+        let mut out = vec![0.0_f32; ndofs];
+        d.copy_to_slice(&mut out).unwrap();
+        out
+    };
+
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let d_cpu = run(&reed_cpu);
+    let d_gpu = run(&reed_gpu);
+    for (a, b) in d_cpu.iter().zip(d_gpu.iter()) {
+        assert!((a - b).abs() < 5.0e-4, "cpu={a} gpu={b}");
+    }
+}
+
 #[cfg(feature = "wgpu-backend")]
 #[test]
 fn test_wgpu_elem_restriction_no_transpose_offset_f32() {
@@ -2039,9 +3471,86 @@ fn test_wgpu_elem_restriction_transpose_offset_matches_cpu() {
     assert_eq!(g_cpu, vec![10.0_f32, 40.0, 30.0]);
 }
 
+/// `Reed::elem_restriction_at_points` forwards to `elem_restriction` in `reed_core`, so WGPU uses
+/// the same `WgpuElemRestriction` gather/scatter path as the offset factory.
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_elem_restriction_at_points_matches_elem_restriction_f32() {
+    let reed = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let nelem = 2usize;
+    let npoints_per_elem = 2usize;
+    let offsets = [0i32, 1, 1, 2];
+    let r_at = reed
+        .elem_restriction_at_points(nelem, npoints_per_elem, 1, 1, 3, &offsets)
+        .unwrap();
+    let r_el = reed
+        .elem_restriction(nelem, npoints_per_elem, 1, 1, 3, &offsets)
+        .unwrap();
+
+    let global = vec![10.0_f32, 20.0, 30.0];
+    let mut local_at = vec![0.0_f32; 4];
+    let mut local_el = vec![0.0_f32; 4];
+    r_at.apply(TransposeMode::NoTranspose, &global, &mut local_at)
+        .unwrap();
+    r_el.apply(TransposeMode::NoTranspose, &global, &mut local_el)
+        .unwrap();
+    assert_eq!(local_at, local_el);
+    assert_eq!(local_at, vec![10.0_f32, 20.0, 20.0, 30.0]);
+
+    let local = local_at.clone();
+    let mut g_at = vec![0.0_f32; 3];
+    let mut g_el = vec![0.0_f32; 3];
+    r_at.apply(TransposeMode::Transpose, &local, &mut g_at)
+        .unwrap();
+    r_el.apply(TransposeMode::Transpose, &local, &mut g_el)
+        .unwrap();
+    assert_eq!(g_at, g_el);
+    assert_eq!(g_at, vec![10.0_f32, 40.0, 30.0]);
+}
+
 #[cfg(feature = "wgpu-backend")]
 #[test]
 fn test_wgpu_elem_restriction_no_transpose_strided_f32() {
+    let reed = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let r = reed
+        .strided_elem_restriction(2, 2, 1, 3, [1, 1, 1])
+        .unwrap();
+
+    let global = vec![10.0_f32, 20.0, 30.0];
+    let mut local = vec![0.0_f32; 4];
+    r.apply(TransposeMode::NoTranspose, &global, &mut local)
+        .unwrap();
+    assert_eq!(local, vec![10.0_f32, 20.0, 20.0, 30.0]);
+}
+
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_elem_restriction_transpose_strided_matches_cpu() {
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let r_cpu = reed_cpu
+        .strided_elem_restriction(2, 2, 1, 3, [1, 1, 1])
+        .unwrap();
+    let r_gpu = reed_gpu
+        .strided_elem_restriction(2, 2, 1, 3, [1, 1, 1])
+        .unwrap();
+
+    let local = vec![10.0_f32, 20.0, 20.0, 30.0];
+    let mut g_cpu = vec![0.0_f32; 3];
+    let mut g_gpu = vec![0.0_f32; 3];
+    r_cpu
+        .apply(TransposeMode::Transpose, &local, &mut g_cpu)
+        .unwrap();
+    r_gpu
+        .apply(TransposeMode::Transpose, &local, &mut g_gpu)
+        .unwrap();
+    assert_eq!(g_cpu, g_gpu);
+    assert_eq!(g_cpu, vec![10.0_f32, 40.0, 30.0]);
+}
+
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_elem_restriction_no_transpose_strided_f32_qstride() {
     let reed = Reed::<f32>::init("/gpu/wgpu").unwrap();
     let nelem = 2usize;
     let q = 3usize;
@@ -2061,7 +3570,7 @@ fn test_wgpu_elem_restriction_no_transpose_strided_f32() {
 
 #[cfg(feature = "wgpu-backend")]
 #[test]
-fn test_wgpu_elem_restriction_transpose_strided_matches_cpu() {
+fn test_wgpu_elem_restriction_transpose_strided_matches_cpu_qstride() {
     let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
     let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
     let nelem = 2usize;
@@ -2231,6 +3740,236 @@ fn test_wgpu_basis_grad_matches_cpu() {
 
     for (a, b) in v_cpu.iter().zip(v_gpu.iter()) {
         assert!((a - b).abs() < 1.0e-4);
+    }
+}
+
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_basis_simplex_tri_p1_interp_grad_matches_cpu() {
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+
+    let b_cpu = reed_cpu
+        .basis_h1_simplex(ElemTopology::Triangle, 1, 1, 1)
+        .unwrap();
+    let b_gpu = reed_gpu
+        .basis_h1_simplex(ElemTopology::Triangle, 1, 1, 1)
+        .unwrap();
+    let dim = b_cpu.dim();
+    let num_elem = 3usize;
+    let u: Vec<f32> = (0..num_elem * b_cpu.num_dof())
+        .map(|i| (i as f32) * 0.13 - 0.2)
+        .collect();
+
+    let mut v_i_cpu = vec![0.0_f32; num_elem * b_cpu.num_qpoints() * b_cpu.num_comp()];
+    let mut v_i_gpu = vec![0.0_f32; num_elem * b_gpu.num_qpoints() * b_gpu.num_comp()];
+    b_cpu
+        .apply(num_elem, false, EvalMode::Interp, &u, &mut v_i_cpu)
+        .unwrap();
+    b_gpu
+        .apply(num_elem, false, EvalMode::Interp, &u, &mut v_i_gpu)
+        .unwrap();
+    for (a, b) in v_i_cpu.iter().zip(v_i_gpu.iter()) {
+        assert!((a - b).abs() < 1.0e-5);
+    }
+
+    let mut v_g_cpu = vec![0.0_f32; num_elem * b_cpu.num_qpoints() * b_cpu.num_comp() * dim];
+    let mut v_g_gpu = vec![0.0_f32; num_elem * b_gpu.num_qpoints() * b_gpu.num_comp() * dim];
+    b_cpu
+        .apply(num_elem, false, EvalMode::Grad, &u, &mut v_g_cpu)
+        .unwrap();
+    b_gpu
+        .apply(num_elem, false, EvalMode::Grad, &u, &mut v_g_gpu)
+        .unwrap();
+    for (a, b) in v_g_cpu.iter().zip(v_g_gpu.iter()) {
+        assert!((a - b).abs() < 1.0e-4);
+    }
+}
+
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_basis_weight_lagrange_matches_cpu() {
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let b_cpu = reed_cpu
+        .basis_tensor_h1_lagrange(2, 1, 3, 4, QuadMode::Gauss)
+        .unwrap();
+    let b_gpu = reed_gpu
+        .basis_tensor_h1_lagrange(2, 1, 3, 4, QuadMode::Gauss)
+        .unwrap();
+    let ne = 2usize;
+    let mut v_cpu = vec![0.0_f32; ne * b_cpu.num_qpoints()];
+    let mut v_gpu = vec![0.0_f32; ne * b_gpu.num_qpoints()];
+    b_cpu
+        .apply(ne, false, EvalMode::Weight, &[], &mut v_cpu)
+        .unwrap();
+    b_gpu
+        .apply(ne, false, EvalMode::Weight, &[], &mut v_gpu)
+        .unwrap();
+    assert_eq!(v_cpu, v_gpu);
+}
+
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_basis_weight_simplex_matches_cpu() {
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let b_cpu = reed_cpu
+        .basis_h1_simplex(ElemTopology::Triangle, 2, 1, 3)
+        .unwrap();
+    let b_gpu = reed_gpu
+        .basis_h1_simplex(ElemTopology::Triangle, 2, 1, 3)
+        .unwrap();
+    let ne = 3usize;
+    let mut v_cpu = vec![0.0_f32; ne * b_cpu.num_qpoints()];
+    let mut v_gpu = vec![0.0_f32; ne * b_gpu.num_qpoints()];
+    b_cpu
+        .apply(ne, false, EvalMode::Weight, &[], &mut v_cpu)
+        .unwrap();
+    b_gpu
+        .apply(ne, false, EvalMode::Weight, &[], &mut v_gpu)
+        .unwrap();
+    assert_eq!(v_cpu, v_gpu);
+}
+
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_basis_simplex_tri_p2_interp_matches_cpu() {
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+
+    let b_cpu = reed_cpu
+        .basis_h1_simplex(ElemTopology::Triangle, 2, 1, 3)
+        .unwrap();
+    let b_gpu = reed_gpu
+        .basis_h1_simplex(ElemTopology::Triangle, 2, 1, 3)
+        .unwrap();
+
+    let num_elem = 2usize;
+    let u: Vec<f32> = (0..num_elem * b_cpu.num_dof())
+        .map(|i| (i as f32) * 0.07 - 0.15)
+        .collect();
+    let mut v_cpu = vec![0.0_f32; num_elem * b_cpu.num_qpoints() * b_cpu.num_comp()];
+    let mut v_gpu = vec![0.0_f32; num_elem * b_gpu.num_qpoints() * b_gpu.num_comp()];
+
+    b_cpu
+        .apply(num_elem, false, EvalMode::Interp, &u, &mut v_cpu)
+        .unwrap();
+    b_gpu
+        .apply(num_elem, false, EvalMode::Interp, &u, &mut v_gpu)
+        .unwrap();
+    for (a, b) in v_cpu.iter().zip(v_gpu.iter()) {
+        assert!((a - b).abs() < 1.0e-5);
+    }
+}
+
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_basis_simplex_tri_p2_div_curl2d_matches_cpu() {
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let b_cpu = reed_cpu
+        .basis_h1_simplex(ElemTopology::Triangle, 2, 2, 3)
+        .unwrap();
+    let b_gpu = reed_gpu
+        .basis_h1_simplex(ElemTopology::Triangle, 2, 2, 3)
+        .unwrap();
+    let ne = 2usize;
+    let u_div = vec![0.11_f32; ne * b_cpu.num_dof() * 2];
+    let mut div_cpu = vec![0.0_f32; ne * b_cpu.num_qpoints()];
+    let mut div_gpu = vec![0.0_f32; ne * b_gpu.num_qpoints()];
+    b_cpu
+        .apply(ne, false, EvalMode::Div, &u_div, &mut div_cpu)
+        .unwrap();
+    b_gpu
+        .apply(ne, false, EvalMode::Div, &u_div, &mut div_gpu)
+        .unwrap();
+    for (a, b) in div_cpu.iter().zip(div_gpu.iter()) {
+        assert!((a - b).abs() < 2.0e-4, "div cpu={a} gpu={b}");
+    }
+
+    let u_curl = vec![0.09_f32; ne * b_cpu.num_dof() * 2];
+    let mut curl_cpu = vec![0.0_f32; ne * b_cpu.num_qpoints()];
+    let mut curl_gpu = vec![0.0_f32; ne * b_gpu.num_qpoints()];
+    b_cpu
+        .apply(ne, false, EvalMode::Curl, &u_curl, &mut curl_cpu)
+        .unwrap();
+    b_gpu
+        .apply(ne, false, EvalMode::Curl, &u_curl, &mut curl_gpu)
+        .unwrap();
+    for (a, b) in curl_cpu.iter().zip(curl_gpu.iter()) {
+        assert!((a - b).abs() < 2.0e-4, "curl cpu={a} gpu={b}");
+    }
+
+    let w_div = (0..ne * b_cpu.num_qpoints())
+        .map(|i| (i as f32) * 0.02 - 0.3)
+        .collect::<Vec<_>>();
+    let mut dt_div_cpu = vec![0.0_f32; ne * b_cpu.num_dof() * 2];
+    let mut dt_div_gpu = vec![0.0_f32; ne * b_gpu.num_dof() * 2];
+    b_cpu
+        .apply(ne, true, EvalMode::Div, &w_div, &mut dt_div_cpu)
+        .unwrap();
+    b_gpu
+        .apply(ne, true, EvalMode::Div, &w_div, &mut dt_div_gpu)
+        .unwrap();
+    for (a, b) in dt_div_cpu.iter().zip(dt_div_gpu.iter()) {
+        assert!((a - b).abs() < 2.0e-4, "div^T cpu={a} gpu={b}");
+    }
+
+    let w_curl = (0..ne * b_cpu.num_qpoints())
+        .map(|i| (i as f32) * 0.025 - 0.15)
+        .collect::<Vec<_>>();
+    let mut dt_curl_cpu = vec![0.0_f32; ne * b_cpu.num_dof() * 2];
+    let mut dt_curl_gpu = vec![0.0_f32; ne * b_gpu.num_dof() * 2];
+    b_cpu
+        .apply(ne, true, EvalMode::Curl, &w_curl, &mut dt_curl_cpu)
+        .unwrap();
+    b_gpu
+        .apply(ne, true, EvalMode::Curl, &w_curl, &mut dt_curl_gpu)
+        .unwrap();
+    for (a, b) in dt_curl_cpu.iter().zip(dt_curl_gpu.iter()) {
+        assert!((a - b).abs() < 2.0e-4, "curl^T cpu={a} gpu={b}");
+    }
+}
+
+#[cfg(feature = "wgpu-backend")]
+#[test]
+fn test_wgpu_basis_simplex_tet_p1_curl3d_matches_cpu() {
+    let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
+    let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
+    let b_cpu = reed_cpu
+        .basis_h1_simplex(ElemTopology::Tet, 1, 3, 4)
+        .unwrap();
+    let b_gpu = reed_gpu
+        .basis_h1_simplex(ElemTopology::Tet, 1, 3, 4)
+        .unwrap();
+    let ne = 2usize;
+    let u = vec![0.06_f32; ne * b_cpu.num_dof() * 3];
+    let mut v_cpu = vec![0.0_f32; ne * b_cpu.num_qpoints() * 3];
+    let mut v_gpu = vec![0.0_f32; ne * b_gpu.num_qpoints() * 3];
+    b_cpu
+        .apply(ne, false, EvalMode::Curl, &u, &mut v_cpu)
+        .unwrap();
+    b_gpu
+        .apply(ne, false, EvalMode::Curl, &u, &mut v_gpu)
+        .unwrap();
+    for (a, b) in v_cpu.iter().zip(v_gpu.iter()) {
+        assert!((a - b).abs() < 2.0e-4, "curl3d cpu={a} gpu={b}");
+    }
+
+    let w = (0..ne * b_cpu.num_qpoints() * 3)
+        .map(|i| (i as f32) * 0.015 - 0.2)
+        .collect::<Vec<_>>();
+    let mut dt_cpu = vec![0.0_f32; ne * b_cpu.num_dof() * 3];
+    let mut dt_gpu = vec![0.0_f32; ne * b_gpu.num_dof() * 3];
+    b_cpu
+        .apply(ne, true, EvalMode::Curl, &w, &mut dt_cpu)
+        .unwrap();
+    b_gpu
+        .apply(ne, true, EvalMode::Curl, &w, &mut dt_gpu)
+        .unwrap();
+    for (a, b) in dt_cpu.iter().zip(dt_gpu.iter()) {
+        assert!((a - b).abs() < 2.0e-4, "curl3d^T cpu={a} gpu={b}");
     }
 }
 

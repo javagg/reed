@@ -1,8 +1,16 @@
 mod basis;
+mod basis_simplex;
 mod elem_restriction;
+pub mod qfunction_device;
 mod runtime;
 mod vector;
 
+pub use qfunction_device::{
+    IdentityF32Wgpu, MassApplyF32Wgpu, Poisson1DApplyF32Wgpu, Poisson2DApplyF32Wgpu,
+    Poisson3DApplyF32Wgpu, QFunctionPrototypeScaleF32, ScaleF32Wgpu, Vector2MassApplyF32Wgpu,
+    Vector2Poisson1DApplyF32Wgpu, Vector2Poisson2DApplyF32Wgpu, Vector3MassApplyF32Wgpu,
+    Vector3Poisson1DApplyF32Wgpu, Vector3Poisson2DApplyF32Wgpu,
+};
 pub use runtime::GpuRuntime;
 use reed_core::{
     enums::*,
@@ -200,9 +208,9 @@ impl<T: Scalar> WgpuBackend<T> {
         self.adapter_name.as_deref()
     }
 
-    /// GPU compute runtime when [`Self::is_gpu_available`] is true.
-    pub fn gpu_runtime(&self) -> Option<&Arc<GpuRuntime>> {
-        self.runtime.as_ref()
+    /// Shared GPU runtime when [`Self::is_gpu_available`] is true (cloneable `Arc` for device Q-functions).
+    pub fn gpu_runtime(&self) -> Option<Arc<GpuRuntime>> {
+        self.runtime.clone()
     }
 }
 
@@ -349,7 +357,13 @@ impl<T: Scalar> Backend<T> for WgpuBackend<T> {
         ncomp: usize,
         q: usize,
     ) -> ReedResult<Box<dyn BasisTrait<T>>> {
-        reed_core::Backend::create_basis_h1_simplex(&self.cpu_backend, topo, poly, ncomp, q)
+        Ok(Box::new(crate::basis_simplex::WgpuSimplexBasis::<T>::new(
+            topo,
+            poly,
+            ncomp,
+            q,
+            self.runtime.clone(),
+        )?))
     }
 }
 
