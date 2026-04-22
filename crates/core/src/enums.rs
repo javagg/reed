@@ -1,52 +1,57 @@
-/// 内存位置类型
+/// Memory location type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MemType {
     Host,
     Device,
 }
 
-/// 基函数求值模式
+/// Basis evaluation mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EvalMode {
     None,
-    /// 插值 B·u
+    /// Interpolation B·u.
     Interp,
-    /// 梯度 ∇B·u
+    /// Gradient ∇B·u.
     Grad,
-    /// 散度 ∇·B·u（向量场、`ncomp == dim`；`LagrangeBasis` / `SimplexBasis` 上为笛卡尔分量偏导之和）
+    /// Divergence ∇·B·u (vector fields, `ncomp == dim`; on `LagrangeBasis` / `SimplexBasis`, this is the sum of Cartesian component partial derivatives).
     Div,
-    /// 旋度 ∇×B·u（2D：`ncomp=2` 输出标量；3D：`ncomp=3` 输出 3 分量；与 `Grad` 布局一致）
+    /// Curl ∇×B·u (2D: `ncomp=2` outputs a scalar; 3D: `ncomp=3` outputs 3 components; layout matches `Grad`).
     Curl,
-    /// 积分权重 w_q
+    /// Quadrature weights w_q.
     Weight,
 }
 
-/// 积分点分布类型
+/// Quadrature point distribution type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QuadMode {
     Gauss,
     GaussLobatto,
 }
 
-/// 转置模式
+/// Transpose mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransposeMode {
     NoTranspose,
     Transpose,
 }
 
-/// 向量范数类型
+/// Vector norm type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NormType {
-    /// L1 范数
+    /// L1 norm.
     One,
-    /// L2 范数
+    /// L2 norm.
     Two,
-    /// L∞ 范数
+    /// L-infinity norm.
     Max,
 }
 
-/// 单元拓扑类型
+/// Element topology type (reference element names aligned with libCEED).
+///
+/// **CPU `SimplexBasis` (`Reed::basis_h1_simplex`)**: H1 Lagrange is implemented on `Line` / `Triangle` / `Tet`.
+/// **Tensor-product `LagrangeBasis` (`Reed::basis_tensor_h1_lagrange`)**: `Quad` (`dim=2`), `Hex` (`dim=3`), etc.
+/// **`Pyramid` / `Prism`**: enum placeholders for libCEED mesh-type alignment; Nedelec / Raviart-Thomas style H(curl)/H(div)
+/// elements are not provided yet, and current vector-field `EvalMode::Div` / `Curl` is still based on H1 vector components.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ElemTopology {
     Line,

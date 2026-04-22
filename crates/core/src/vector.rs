@@ -1,6 +1,6 @@
 use crate::{enums::NormType, error::ReedResult, scalar::Scalar};
 
-/// 抽象数值向量 trait
+/// Abstract numeric vector trait.
 #[cfg(not(target_arch = "wasm32"))]
 pub trait VectorTrait<T: Scalar>: Send + Sync {
     fn len(&self) -> usize;

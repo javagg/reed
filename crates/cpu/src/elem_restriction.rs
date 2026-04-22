@@ -1,6 +1,10 @@
 use reed_core::{
-    elem_restriction::ElemRestrictionTrait, enums::TransposeMode, error::ReedResult,
-    scalar::Scalar, ReedError,
+    csr::csr_sparsity_from_offset_restriction,
+    elem_restriction::ElemRestrictionTrait,
+    enums::TransposeMode,
+    error::ReedResult,
+    scalar::Scalar,
+    CsrPattern, ReedError,
 };
 
 #[cfg(feature = "parallel")]
@@ -437,12 +441,47 @@ impl<T: Scalar> ElemRestrictionTrait<T> for CpuElemRestriction<T> {
         }
         Ok(())
     }
+
+    fn assembled_csr_pattern(&self) -> ReedResult<CsrPattern> {
+        match &self.layout {
+            RestrictionLayout::Offset {
+                offsets,
+                compstride,
+            } => csr_sparsity_from_offset_restriction(
+                self.nelem,
+                self.elemsize,
+                self.ncomp,
+                *compstride,
+                self.lsize,
+                offsets,
+            ),
+            RestrictionLayout::Strided { .. } => Err(ReedError::ElemRestriction(
+                "assembled_csr_pattern: strided layout has no explicit per-element L-node indices"
+                    .into(),
+            )),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use reed_core::enums::TransposeMode;
+
+    #[test]
+    fn assembled_csr_pattern_line_two_p1_elements() {
+        let r = CpuElemRestriction::<f64>::new_offset(2, 2, 1, 1, 3, &[0, 1, 1, 2]).unwrap();
+        let p = r.assembled_csr_pattern().unwrap();
+        assert_eq!(p.nrows, 3);
+        assert_eq!(p.nnz(), 7);
+    }
+
+    #[test]
+    fn assembled_csr_pattern_ncomp2_one_segment() {
+        let r = CpuElemRestriction::<f64>::new_offset(1, 2, 2, 3, 10, &[0, 1]).unwrap();
+        let p = r.assembled_csr_pattern().unwrap();
+        assert_eq!(p.nnz(), 16);
+    }
 
     #[test]
     fn test_offset_restriction_roundtrip() {

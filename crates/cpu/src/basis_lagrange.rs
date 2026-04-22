@@ -174,9 +174,14 @@ impl<T: Scalar> BasisTrait<T> for LagrangeBasis<T> {
             }
             EvalMode::Weight => {
                 if transpose {
-                    return Err(ReedError::Basis(
-                        "weight evaluation does not support transpose".into(),
-                    ));
+                    // Quadrature → nodal layout matches scalar `Interp` transpose (libCEED-style
+                    // `CEED_EVAL_WEIGHT` adjoint uses the same reference operator as `Interp`).
+                    if self.ncomp != 1 {
+                        return Err(ReedError::Basis(
+                            "EvalMode::Weight transpose requires basis.num_comp() == 1".into(),
+                        ));
+                    }
+                    return self.apply(num_elem, true, EvalMode::Interp, u, v);
                 }
                 if v.len() != num_elem * self.num_qpoints {
                     return Err(ReedError::Basis(format!(
@@ -1907,5 +1912,28 @@ mod tests {
         assert!((v_t[2] + 5.0_f64).abs() < 1.0e-12);
         assert!((v_t[4] + 5.5_f64).abs() < 1.0e-12);
         assert!((v_t[6] + 6.0_f64).abs() < 1.0e-12);
+    }
+
+    #[test]
+    fn weight_transpose_matches_interp_transpose_scalar() {
+        let b = LagrangeBasis::<f64>::new(1, 1, 2, 2, reed_core::QuadMode::Gauss).unwrap();
+        assert_eq!(b.num_comp(), 1);
+        let ne = 2usize;
+        let u: Vec<f64> = (0..ne * b.num_qpoints())
+            .map(|i| 0.1 * (i + 1) as f64)
+            .collect();
+        let mut v_w = vec![0.0_f64; ne * b.num_dof() * b.num_comp()];
+        let mut v_i = vec![0.0_f64; ne * b.num_dof() * b.num_comp()];
+        b.apply(ne, true, EvalMode::Weight, &u, &mut v_w).unwrap();
+        b.apply(ne, true, EvalMode::Interp, &u, &mut v_i).unwrap();
+        assert_eq!(v_w.len(), v_i.len());
+        for i in 0..v_w.len() {
+            assert!(
+                (v_w[i] - v_i[i]).abs() < 1e-14,
+                "i={i} w={} i={}",
+                v_w[i],
+                v_i[i]
+            );
+        }
     }
 }

@@ -2,7 +2,7 @@ use reed_core::{
     enums::NormType, error::ReedResult, scalar::Scalar, vector::VectorTrait, ReedError,
 };
 
-/// CPU 向量实现，内部存储 `Vec<T>`
+/// CPU vector implementation backed by `Vec<T>`.
 pub struct CpuVector<T: Scalar> {
     data: Vec<T>,
 }

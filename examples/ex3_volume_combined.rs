@@ -1,7 +1,7 @@
-/// libCEED ex3-volume 对应示例（当前 Reed 支持 1D/2D/3D）
+/// libCEED ex3-volume counterpart example (Reed currently supports 1D/2D/3D).
 ///
-/// 演示组合算子作用：v = (M + K)u。
-/// 对于常量 u=1，扩散项 K 贡献应为 0，结果退化为质量积分。
+/// Demonstrates the action of the combined operator: v = (M + K)u.
+/// For constant u=1, the diffusion term K should contribute 0, so the result reduces to the mass integral.
 use reed::{FieldVector, OperatorTrait, QuadMode, Reed};
 use std::env;
 

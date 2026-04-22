@@ -1,7 +1,7 @@
 use num_traits::{Float, NumAssign};
 use std::fmt::Debug;
 
-/// 标量类型约束，支持 f32 / f64
+/// Scalar type bound, supports f32 / f64.
 pub trait Scalar: Float + NumAssign + Send + Sync + Copy + Debug + 'static {
     const ZERO: Self;
     const ONE: Self;

@@ -80,6 +80,36 @@ impl<T: Scalar> QFunctionTrait<T> for Identity {
         v.copy_from_slice(u);
         Ok(())
     }
+
+    fn supports_operator_transpose(&self) -> bool {
+        true
+    }
+
+    fn apply_operator_transpose(
+        &self,
+        _ctx: &[u8],
+        q: usize,
+        output_cotangents: &[&[T]],
+        input_cotangents: &mut [&mut [T]],
+    ) -> ReedResult<()> {
+        if output_cotangents.len() != 1 || input_cotangents.len() != 1 {
+            return Err(ReedError::QFunction(
+                "Identity transpose expects 1 output cotangent and 1 input cotangent buffer".into(),
+            ));
+        }
+        let dv = output_cotangents[0];
+        let du = &mut input_cotangents[0];
+        let n = q * self.inputs[0].num_comp;
+        if dv.len() != n || du.len() != n {
+            return Err(ReedError::QFunction(
+                "Identity transpose: buffer length mismatch".into(),
+            ));
+        }
+        for i in 0..n {
+            du[i] += dv[i];
+        }
+        Ok(())
+    }
 }
 
 /// `"Identity to scalar"` — keep the first component per quadrature point (`out[i] = in[i * ncomp]`).
@@ -143,6 +173,36 @@ impl<T: Scalar> QFunctionTrait<T> for IdentityScalar {
         }
         for i in 0..q {
             v[i] = u[i * ncomp];
+        }
+        Ok(())
+    }
+
+    fn supports_operator_transpose(&self) -> bool {
+        true
+    }
+
+    fn apply_operator_transpose(
+        &self,
+        _ctx: &[u8],
+        q: usize,
+        output_cotangents: &[&[T]],
+        input_cotangents: &mut [&mut [T]],
+    ) -> ReedResult<()> {
+        if output_cotangents.len() != 1 || input_cotangents.len() != 1 {
+            return Err(ReedError::QFunction(
+                "IdentityScalar transpose expects 1 output cotangent and 1 input buffer".into(),
+            ));
+        }
+        let ncomp = self.inputs[0].num_comp;
+        let dv = output_cotangents[0];
+        let du = &mut input_cotangents[0];
+        if dv.len() != q || du.len() != q * ncomp {
+            return Err(ReedError::QFunction(
+                "IdentityScalar transpose: buffer length mismatch".into(),
+            ));
+        }
+        for i in 0..q {
+            du[i * ncomp] += dv[i];
         }
         Ok(())
     }
@@ -217,6 +277,37 @@ impl<T: Scalar> QFunctionTrait<T> for Scale {
         }
         Ok(())
     }
+
+    fn supports_operator_transpose(&self) -> bool {
+        true
+    }
+
+    fn apply_operator_transpose(
+        &self,
+        ctx: &[u8],
+        q: usize,
+        output_cotangents: &[&[T]],
+        input_cotangents: &mut [&mut [T]],
+    ) -> ReedResult<()> {
+        let alpha = scale_alpha_from_libceed_context::<T>(ctx)?;
+        if output_cotangents.len() != 1 || input_cotangents.len() != 1 {
+            return Err(ReedError::QFunction(
+                "Scale transpose expects 1 output cotangent and 1 input cotangent buffer".into(),
+            ));
+        }
+        let dv = output_cotangents[0];
+        let du = &mut input_cotangents[0];
+        let ncomp = self.inputs[0].num_comp;
+        if dv.len() != q * ncomp || du.len() != q * ncomp {
+            return Err(ReedError::QFunction(
+                "Scale transpose: buffer length mismatch".into(),
+            ));
+        }
+        for i in 0..du.len() {
+            du[i] += alpha * dv[i];
+        }
+        Ok(())
+    }
 }
 
 /// `"Scale (scalar)"` — same kernel as [`Scale`]; separate gallery name for libCEED parity.
@@ -254,6 +345,26 @@ impl<T: Scalar> QFunctionTrait<T> for ScaleScalar {
         outputs: &mut [&mut [T]],
     ) -> ReedResult<()> {
         <Scale as QFunctionTrait<T>>::apply(&self.inner, ctx, q, inputs, outputs)
+    }
+
+    fn supports_operator_transpose(&self) -> bool {
+        true
+    }
+
+    fn apply_operator_transpose(
+        &self,
+        ctx: &[u8],
+        q: usize,
+        output_cotangents: &[&[T]],
+        input_cotangents: &mut [&mut [T]],
+    ) -> ReedResult<()> {
+        <Scale as QFunctionTrait<T>>::apply_operator_transpose(
+            &self.inner,
+            ctx,
+            q,
+            output_cotangents,
+            input_cotangents,
+        )
     }
 }
 
@@ -326,6 +437,44 @@ impl<T: Scalar> QFunctionTrait<T> for Vector2MassApply {
         }
         Ok(())
     }
+
+    fn supports_operator_transpose(&self) -> bool {
+        true
+    }
+
+    fn apply_operator_transpose(
+        &self,
+        _ctx: &[u8],
+        q: usize,
+        output_cotangents: &[&[T]],
+        input_cotangents: &mut [&mut [T]],
+    ) -> ReedResult<()> {
+        if output_cotangents.len() != 1 || input_cotangents.len() != 2 {
+            return Err(ReedError::QFunction(
+                "Vector2MassApply transpose expects 1 output cotangent and 2 input buffers".into(),
+            ));
+        }
+        let dv = output_cotangents[0];
+        if dv.len() != q * 2 {
+            return Err(ReedError::QFunction(
+                "Vector2MassApply transpose: buffer length mismatch".into(),
+            ));
+        }
+        let (du_buf, qdata_fwd) = input_cotangents.split_at_mut(1);
+        let du = &mut du_buf[0];
+        let qdata: &[T] = &qdata_fwd[0];
+        if du.len() != q * 2 || qdata.len() != q {
+            return Err(ReedError::QFunction(
+                "Vector2MassApply transpose: buffer length mismatch".into(),
+            ));
+        }
+        for i in 0..q {
+            let s = qdata[i];
+            du[i * 2] += s * dv[i * 2];
+            du[i * 2 + 1] += s * dv[i * 2 + 1];
+        }
+        Ok(())
+    }
 }
 
 /// `"Vector2Poisson1DApply"` — two independent scalar 1D Poisson gradient applies (same `qdata` as `Poisson1DApply`).
@@ -392,6 +541,44 @@ impl<T: Scalar> QFunctionTrait<T> for Vector2Poisson1DApply {
             let g = qdata[i];
             dv[i * 2] = g * du[i * 2];
             dv[i * 2 + 1] = g * du[i * 2 + 1];
+        }
+        Ok(())
+    }
+
+    fn supports_operator_transpose(&self) -> bool {
+        true
+    }
+
+    fn apply_operator_transpose(
+        &self,
+        _ctx: &[u8],
+        q: usize,
+        output_cotangents: &[&[T]],
+        input_cotangents: &mut [&mut [T]],
+    ) -> ReedResult<()> {
+        if output_cotangents.len() != 1 || input_cotangents.len() != 2 {
+            return Err(ReedError::QFunction(
+                "Vector2Poisson1DApply transpose expects 1 output cotangent and 2 input buffers".into(),
+            ));
+        }
+        let ddv = output_cotangents[0];
+        if ddv.len() != q * 2 {
+            return Err(ReedError::QFunction(
+                "Vector2Poisson1DApply transpose: buffer length mismatch".into(),
+            ));
+        }
+        let (ddu_buf, qdata_fwd) = input_cotangents.split_at_mut(1);
+        let ddu = &mut ddu_buf[0];
+        let qdata: &[T] = &qdata_fwd[0];
+        if ddu.len() != q * 2 || qdata.len() != q {
+            return Err(ReedError::QFunction(
+                "Vector2Poisson1DApply transpose: buffer length mismatch".into(),
+            ));
+        }
+        for i in 0..q {
+            let g = qdata[i];
+            ddu[i * 2] += g * ddv[i * 2];
+            ddu[i * 2 + 1] += g * ddv[i * 2 + 1];
         }
         Ok(())
     }
@@ -472,6 +659,52 @@ impl<T: Scalar> QFunctionTrait<T> for Vector2Poisson2DApply {
         }
         Ok(())
     }
+
+    fn supports_operator_transpose(&self) -> bool {
+        true
+    }
+
+    fn apply_operator_transpose(
+        &self,
+        _ctx: &[u8],
+        q: usize,
+        output_cotangents: &[&[T]],
+        input_cotangents: &mut [&mut [T]],
+    ) -> ReedResult<()> {
+        if output_cotangents.len() != 1 || input_cotangents.len() != 2 {
+            return Err(ReedError::QFunction(
+                "Vector2Poisson2DApply transpose expects 1 output cotangent and 2 input buffers".into(),
+            ));
+        }
+        let ddv = output_cotangents[0];
+        if ddv.len() != q * 4 {
+            return Err(ReedError::QFunction(
+                "Vector2Poisson2DApply transpose: buffer length mismatch".into(),
+            ));
+        }
+        let (ddu_buf, qdata_fwd) = input_cotangents.split_at_mut(1);
+        let ddu = &mut ddu_buf[0];
+        let qdata: &[T] = &qdata_fwd[0];
+        if ddu.len() != q * 4 || qdata.len() != q * 4 {
+            return Err(ReedError::QFunction(
+                "Vector2Poisson2DApply transpose: buffer length mismatch".into(),
+            ));
+        }
+        for i in 0..q {
+            for c in 0..2 {
+                let base = c * 2;
+                let ddv0 = ddv[i * 4 + base];
+                let ddv1 = ddv[i * 4 + base + 1];
+                let g00 = qdata[i * 4];
+                let g01 = qdata[i * 4 + 1];
+                let g10 = qdata[i * 4 + 2];
+                let g11 = qdata[i * 4 + 3];
+                ddu[i * 4 + base] += g00 * ddv0 + g10 * ddv1;
+                ddu[i * 4 + base + 1] += g01 * ddv0 + g11 * ddv1;
+            }
+        }
+        Ok(())
+    }
 }
 
 // --- Vector3 mass / Poisson -----------------------------------------------
@@ -544,6 +777,45 @@ impl<T: Scalar> QFunctionTrait<T> for Vector3MassApply {
         }
         Ok(())
     }
+
+    fn supports_operator_transpose(&self) -> bool {
+        true
+    }
+
+    fn apply_operator_transpose(
+        &self,
+        _ctx: &[u8],
+        q: usize,
+        output_cotangents: &[&[T]],
+        input_cotangents: &mut [&mut [T]],
+    ) -> ReedResult<()> {
+        if output_cotangents.len() != 1 || input_cotangents.len() != 2 {
+            return Err(ReedError::QFunction(
+                "Vector3MassApply transpose expects 1 output cotangent and 2 input buffers".into(),
+            ));
+        }
+        let dv = output_cotangents[0];
+        if dv.len() != q * 3 {
+            return Err(ReedError::QFunction(
+                "Vector3MassApply transpose: buffer length mismatch".into(),
+            ));
+        }
+        let (du_buf, qdata_fwd) = input_cotangents.split_at_mut(1);
+        let du = &mut du_buf[0];
+        let qdata: &[T] = &qdata_fwd[0];
+        if du.len() != q * 3 || qdata.len() != q {
+            return Err(ReedError::QFunction(
+                "Vector3MassApply transpose: buffer length mismatch".into(),
+            ));
+        }
+        for i in 0..q {
+            let s = qdata[i];
+            du[i * 3] += s * dv[i * 3];
+            du[i * 3 + 1] += s * dv[i * 3 + 1];
+            du[i * 3 + 2] += s * dv[i * 3 + 2];
+        }
+        Ok(())
+    }
 }
 
 /// `"Vector3Poisson1DApply"` — three independent scalar 1D Laplacian applies (same `qdata` as Poisson1D).
@@ -611,6 +883,45 @@ impl<T: Scalar> QFunctionTrait<T> for Vector3Poisson1DApply {
             dv[i * 3] = g * du[i * 3];
             dv[i * 3 + 1] = g * du[i * 3 + 1];
             dv[i * 3 + 2] = g * du[i * 3 + 2];
+        }
+        Ok(())
+    }
+
+    fn supports_operator_transpose(&self) -> bool {
+        true
+    }
+
+    fn apply_operator_transpose(
+        &self,
+        _ctx: &[u8],
+        q: usize,
+        output_cotangents: &[&[T]],
+        input_cotangents: &mut [&mut [T]],
+    ) -> ReedResult<()> {
+        if output_cotangents.len() != 1 || input_cotangents.len() != 2 {
+            return Err(ReedError::QFunction(
+                "Vector3Poisson1DApply transpose expects 1 output cotangent and 2 input buffers".into(),
+            ));
+        }
+        let ddv = output_cotangents[0];
+        if ddv.len() != q * 3 {
+            return Err(ReedError::QFunction(
+                "Vector3Poisson1DApply transpose: buffer length mismatch".into(),
+            ));
+        }
+        let (ddu_buf, qdata_fwd) = input_cotangents.split_at_mut(1);
+        let ddu = &mut ddu_buf[0];
+        let qdata: &[T] = &qdata_fwd[0];
+        if ddu.len() != q * 3 || qdata.len() != q {
+            return Err(ReedError::QFunction(
+                "Vector3Poisson1DApply transpose: buffer length mismatch".into(),
+            ));
+        }
+        for i in 0..q {
+            let g = qdata[i];
+            ddu[i * 3] += g * ddv[i * 3];
+            ddu[i * 3 + 1] += g * ddv[i * 3 + 1];
+            ddu[i * 3 + 2] += g * ddv[i * 3 + 2];
         }
         Ok(())
     }
@@ -690,6 +1001,52 @@ impl<T: Scalar> QFunctionTrait<T> for Vector3Poisson2DApply {
                 let g11 = qdata[i * 4 + 3];
                 dv[i * 6 + base] = g00 * du0 + g01 * du1;
                 dv[i * 6 + base + 1] = g10 * du0 + g11 * du1;
+            }
+        }
+        Ok(())
+    }
+
+    fn supports_operator_transpose(&self) -> bool {
+        true
+    }
+
+    fn apply_operator_transpose(
+        &self,
+        _ctx: &[u8],
+        q: usize,
+        output_cotangents: &[&[T]],
+        input_cotangents: &mut [&mut [T]],
+    ) -> ReedResult<()> {
+        if output_cotangents.len() != 1 || input_cotangents.len() != 2 {
+            return Err(ReedError::QFunction(
+                "Vector3Poisson2DApply transpose expects 1 output cotangent and 2 input buffers".into(),
+            ));
+        }
+        let ddv = output_cotangents[0];
+        if ddv.len() != q * 6 {
+            return Err(ReedError::QFunction(
+                "Vector3Poisson2DApply transpose: buffer length mismatch".into(),
+            ));
+        }
+        let (ddu_buf, qdata_fwd) = input_cotangents.split_at_mut(1);
+        let ddu = &mut ddu_buf[0];
+        let qdata: &[T] = &qdata_fwd[0];
+        if ddu.len() != q * 6 || qdata.len() != q * 4 {
+            return Err(ReedError::QFunction(
+                "Vector3Poisson2DApply transpose: buffer length mismatch".into(),
+            ));
+        }
+        for i in 0..q {
+            for c in 0..3 {
+                let base = c * 2;
+                let ddv0 = ddv[i * 6 + base];
+                let ddv1 = ddv[i * 6 + base + 1];
+                let g00 = qdata[i * 4];
+                let g01 = qdata[i * 4 + 1];
+                let g10 = qdata[i * 4 + 2];
+                let g11 = qdata[i * 4 + 3];
+                ddu[i * 6 + base] += g00 * ddv0 + g10 * ddv1;
+                ddu[i * 6 + base + 1] += g01 * ddv0 + g11 * ddv1;
             }
         }
         Ok(())
@@ -774,6 +1131,59 @@ impl<T: Scalar> QFunctionTrait<T> for Vector3Poisson3DApply {
                 dv[i * 9 + base] = g00 * du0 + g01 * du1 + g02 * du2;
                 dv[i * 9 + base + 1] = g10 * du0 + g11 * du1 + g12 * du2;
                 dv[i * 9 + base + 2] = g20 * du0 + g21 * du1 + g22 * du2;
+            }
+        }
+        Ok(())
+    }
+
+    fn supports_operator_transpose(&self) -> bool {
+        true
+    }
+
+    fn apply_operator_transpose(
+        &self,
+        _ctx: &[u8],
+        q: usize,
+        output_cotangents: &[&[T]],
+        input_cotangents: &mut [&mut [T]],
+    ) -> ReedResult<()> {
+        if output_cotangents.len() != 1 || input_cotangents.len() != 2 {
+            return Err(ReedError::QFunction(
+                "Vector3Poisson3DApply transpose expects 1 output cotangent and 2 input buffers".into(),
+            ));
+        }
+        let ddv = output_cotangents[0];
+        if ddv.len() != q * 9 {
+            return Err(ReedError::QFunction(
+                "Vector3Poisson3DApply transpose: buffer length mismatch".into(),
+            ));
+        }
+        let (ddu_buf, qdata_fwd) = input_cotangents.split_at_mut(1);
+        let ddu = &mut ddu_buf[0];
+        let qdata: &[T] = &qdata_fwd[0];
+        if ddu.len() != q * 9 || qdata.len() != q * 9 {
+            return Err(ReedError::QFunction(
+                "Vector3Poisson3DApply transpose: buffer length mismatch".into(),
+            ));
+        }
+        for i in 0..q {
+            for c in 0..3 {
+                let base = c * 3;
+                let ddv0 = ddv[i * 9 + base];
+                let ddv1 = ddv[i * 9 + base + 1];
+                let ddv2 = ddv[i * 9 + base + 2];
+                let g00 = qdata[i * 9];
+                let g01 = qdata[i * 9 + 1];
+                let g02 = qdata[i * 9 + 2];
+                let g10 = qdata[i * 9 + 3];
+                let g11 = qdata[i * 9 + 4];
+                let g12 = qdata[i * 9 + 5];
+                let g20 = qdata[i * 9 + 6];
+                let g21 = qdata[i * 9 + 7];
+                let g22 = qdata[i * 9 + 8];
+                ddu[i * 9 + base] += g00 * ddv0 + g10 * ddv1 + g20 * ddv2;
+                ddu[i * 9 + base + 1] += g01 * ddv0 + g11 * ddv1 + g21 * ddv2;
+                ddu[i * 9 + base + 2] += g02 * ddv0 + g12 * ddv1 + g22 * ddv2;
             }
         }
         Ok(())

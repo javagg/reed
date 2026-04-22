@@ -4,11 +4,39 @@ use crate::{
     enums::*,
     error::{ReedError, ReedResult},
     scalar::Scalar,
+    types::CeedInt,
     vector::VectorTrait,
 };
 use std::sync::{Arc, Mutex};
 
-/// 后端工厂 trait（各后端实现此 trait）
+/// Convert libCEED `CeedInt` / `int64_t` offset buffers from C interop into `i32` for Reed.
+fn ceed_int_offsets_to_i32(offsets: &[i64]) -> ReedResult<Vec<i32>> {
+    offsets
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| {
+            i32::try_from(v).map_err(|_| {
+                ReedError::InvalidArgument(format!(
+                    "offset[{i}]={v} does not fit in i32 (Reed restriction index type)"
+                ))
+            })
+        })
+        .collect()
+}
+
+fn ceed_int_strides_to_i32(strides: [i64; 3]) -> ReedResult<[i32; 3]> {
+    let mut out = [0i32; 3];
+    for (i, &v) in strides.iter().enumerate() {
+        out[i] = i32::try_from(v).map_err(|_| {
+            ReedError::InvalidArgument(format!(
+                "strides[{i}]={v} does not fit in i32 (Reed restriction stride type)"
+            ))
+        })?;
+    }
+    Ok(out)
+}
+
+/// Backend factory trait (implemented by each backend).
 ///
 /// On WASM targets, the `Send + Sync` bounds are omitted because wgpu::Device
 /// is not thread-safe in the browser's single-threaded environment.
@@ -25,7 +53,7 @@ pub trait Backend<T: Scalar>: Send + Sync {
         ncomp: usize,
         compstride: usize,
         lsize: usize,
-        offsets: &[i32],
+        offsets: &[CeedInt],
     ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>>;
 
     fn create_strided_elem_restriction(
@@ -34,7 +62,7 @@ pub trait Backend<T: Scalar>: Send + Sync {
         elemsize: usize,
         ncomp: usize,
         lsize: usize,
-        strides: [i32; 3],
+        strides: [CeedInt; 3],
     ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>>;
 
     fn create_basis_tensor_h1_lagrange(
@@ -49,7 +77,7 @@ pub trait Backend<T: Scalar>: Send + Sync {
     /// Create an H1 Lagrange basis on a simplex reference element.
     ///
     /// # Parameters
-    /// * `topo`  — `ElemTopology::Triangle` or `ElemTopology::Tet`.
+    /// * `topo`  — `ElemTopology::Line`, `Triangle`, or `Tet` (CPU simplex basis).
     /// * `poly`  — polynomial order (1 = P1, 2 = P2).
     /// * `ncomp` — number of field components.
     /// * `q`     — number of quadrature points (see `SimplexBasis` docs for
@@ -77,7 +105,7 @@ pub trait Backend<T: Scalar> {
         ncomp: usize,
         compstride: usize,
         lsize: usize,
-        offsets: &[i32],
+        offsets: &[CeedInt],
     ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>>;
 
     fn create_strided_elem_restriction(
@@ -86,7 +114,7 @@ pub trait Backend<T: Scalar> {
         elemsize: usize,
         ncomp: usize,
         lsize: usize,
-        strides: [i32; 3],
+        strides: [CeedInt; 3],
     ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>>;
 
     fn create_basis_tensor_h1_lagrange(
@@ -107,13 +135,13 @@ pub trait Backend<T: Scalar> {
     ) -> ReedResult<Box<dyn BasisTrait<T>>>;
 }
 
-/// Reed 顶层库上下文
+/// Top-level Reed library context.
 pub struct Reed<T: Scalar> {
     backend: Arc<Mutex<Arc<dyn Backend<T>>>>,
 }
 
 impl<T: Scalar> Reed<T> {
-    /// 从已有后端创建（主要用于测试和库内部）
+    /// Create from an existing backend (mainly for tests and internal usage).
     pub fn from_backend(backend: Arc<dyn Backend<T>>) -> Self {
         Self {
             backend: Arc::new(Mutex::new(backend)),
@@ -124,7 +152,7 @@ impl<T: Scalar> Reed<T> {
         (**self.backend.lock().unwrap()).resource_name().to_owned()
     }
 
-    // ── Vector 工厂 ──
+    // -- Vector factory --
 
     pub fn vector(&self, n: usize) -> ReedResult<Box<dyn VectorTrait<T>>> {
         (**self.backend.lock().unwrap()).create_vector(n)
@@ -136,7 +164,7 @@ impl<T: Scalar> Reed<T> {
         Ok(v)
     }
 
-    // ── ElemRestriction 工厂 ──
+    // -- ElemRestriction factory --
 
     pub fn elem_restriction(
         &self,
@@ -145,7 +173,7 @@ impl<T: Scalar> Reed<T> {
         ncomp: usize,
         compstride: usize,
         lsize: usize,
-        offsets: &[i32],
+        offsets: &[CeedInt],
     ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>> {
         (**self.backend.lock().unwrap())
             .create_elem_restriction(nelem, elemsize, ncomp, compstride, lsize, offsets)
@@ -157,7 +185,7 @@ impl<T: Scalar> Reed<T> {
         elemsize: usize,
         ncomp: usize,
         lsize: usize,
-        strides: [i32; 3],
+        strides: [CeedInt; 3],
     ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>> {
         (**self.backend.lock().unwrap())
             .create_strided_elem_restriction(nelem, elemsize, ncomp, lsize, strides)
@@ -174,7 +202,7 @@ impl<T: Scalar> Reed<T> {
         ncomp: usize,
         compstride: usize,
         lsize: usize,
-        offsets: &[i32],
+        offsets: &[CeedInt],
     ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>> {
         let expected = nelem.checked_mul(npoints_per_elem).ok_or_else(|| {
             ReedError::InvalidArgument("elem_restriction_at_points: size overflow".into())
@@ -189,7 +217,56 @@ impl<T: Scalar> Reed<T> {
         self.elem_restriction(nelem, npoints_per_elem, ncomp, compstride, lsize, offsets)
     }
 
-    // ── Basis 工厂 ──
+    /// Like [`Self::elem_restriction`], but accepts `i64` offsets (typical when bridging from
+    /// libCEED `CeedInt` arrays stored as `int64_t` / `i64` in generated bindings).
+    pub fn elem_restriction_ceed_int_offsets(
+        &self,
+        nelem: usize,
+        elemsize: usize,
+        ncomp: usize,
+        compstride: usize,
+        lsize: usize,
+        offsets: &[i64],
+    ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>> {
+        let v = ceed_int_offsets_to_i32(offsets)?;
+        self.elem_restriction(nelem, elemsize, ncomp, compstride, lsize, &v)
+    }
+
+    /// Like [`Self::elem_restriction_at_points`], but accepts `i64` offsets.
+    pub fn elem_restriction_at_points_ceed_int_offsets(
+        &self,
+        nelem: usize,
+        npoints_per_elem: usize,
+        ncomp: usize,
+        compstride: usize,
+        lsize: usize,
+        offsets: &[i64],
+    ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>> {
+        let v = ceed_int_offsets_to_i32(offsets)?;
+        self.elem_restriction_at_points(
+            nelem,
+            npoints_per_elem,
+            ncomp,
+            compstride,
+            lsize,
+            &v,
+        )
+    }
+
+    /// Like [`Self::strided_elem_restriction`], but accepts `i64` strides (libCEED `CeedInt[3]`).
+    pub fn strided_elem_restriction_ceed_int_strides(
+        &self,
+        nelem: usize,
+        elemsize: usize,
+        ncomp: usize,
+        lsize: usize,
+        strides: [i64; 3],
+    ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>> {
+        let s = ceed_int_strides_to_i32(strides)?;
+        self.strided_elem_restriction(nelem, elemsize, ncomp, lsize, s)
+    }
+
+    // -- Basis factory --
 
     pub fn basis_tensor_h1_lagrange(
         &self,
@@ -202,7 +279,7 @@ impl<T: Scalar> Reed<T> {
         (**self.backend.lock().unwrap()).create_basis_tensor_h1_lagrange(dim, ncomp, p, q, qmode)
     }
 
-    /// Create an H1 Lagrange basis on a simplex reference element.
+    /// Create an H1 Lagrange basis on a simplex reference element (segment, triangle, or tet).
     ///
     /// See [`Backend::create_basis_h1_simplex`] for parameter details.
     pub fn basis_h1_simplex(
@@ -215,20 +292,20 @@ impl<T: Scalar> Reed<T> {
         (**self.backend.lock().unwrap()).create_basis_h1_simplex(topo, poly, ncomp, q)
     }
 
-    /// 获取后端引用
+    /// Get the backend handle.
     pub fn backend(&self) -> &Arc<Mutex<Arc<dyn Backend<T>>>> {
         &self.backend
     }
 }
 
-/// 通过资源字符串初始化 Reed 上下文
+/// Initialize a Reed context from a resource string.
 ///
-/// 支持的资源：
-/// - "/cpu/self" 或 "/cpu/self/ref" → CPU 后端
+/// Supported resources:
+/// - "/cpu/self" or "/cpu/self/ref" -> CPU backend
 pub fn init<T: Scalar>(resource: &str) -> ReedResult<Reed<T>> {
     let _resource = resource;
-    // 后端注册在 reed-cpu crate 中完成
-    // 这里提供一个查找机制
+    // Backend registration is done in the reed-cpu crate.
+    // This function only provides the lookup path.
     Err(ReedError::BackendNotSupported(format!(
         "No backend registered for resource '{}'. \
          Use Reed::from_backend() or enable the appropriate backend crate.",

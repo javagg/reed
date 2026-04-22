@@ -1,6 +1,6 @@
-/// libCEED ex2-surface 对应示例（当前 Reed 支持 1D/2D/3D）
+/// libCEED ex2-surface counterpart example (Reed currently supports 1D/2D/3D).
 ///
-/// 通过 Poisson 算子计算边界测度：
+/// Computes boundary measure via the Poisson operator:
 /// - 1D: 2
 /// - 2D: 8
 /// - 3D: 24

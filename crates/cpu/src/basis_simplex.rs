@@ -1,10 +1,13 @@
-//! Simplex basis functions for triangles and tetrahedra.
+//! Simplex basis functions for segments, triangles, and tetrahedra.
 //!
 //! Implements [`BasisTrait`] for H1-conforming Lagrange bases on simplex
 //! reference elements:
 //!
 //! | Type | Topology | DOFs | Exact up to polynomial degree |
 //! |------|----------|------|-------------------------------|
+//! | P1 segment | Line | 2 | linear |
+//! | P2 segment | Line | 3 | quadratic |
+//! | P3 segment | Line | 4 | cubic |
 //! | P1 triangle | Tri3 | 3 | linear |
 //! | P2 triangle | Tri6 | 6 | quadratic |
 //! | P3 triangle | Tri10 | 10 | cubic |
@@ -13,6 +16,8 @@
 //! | P3 tet | Tet20 | 20 | cubic |
 //!
 //! ## Reference elements
+//!
+//! **Segment** — reference interval [0,1] (1D simplex).
 //!
 //! **Triangle** — vertices (0,0), (1,0), (0,1).
 //!
@@ -58,12 +63,14 @@ use reed_core::{
 };
 use simplex_p3_data::{TET_P3_COEFF, TET_P3_EXP, TRI_P3_COEFF};
 
+use super::basis_lagrange::gauss_quadrature;
+
 #[cfg(feature = "parallel")]
 const PAR_MIN_ELEMS_PER_TASK: usize = 128;
 
 // ── SimplexBasis ──────────────────────────────────────────────────────────────
 
-/// H1 Lagrange basis on triangle or tetrahedron reference elements.
+/// H1 Lagrange basis on segment, triangle, or tetrahedron reference elements.
 pub struct SimplexBasis<T: Scalar> {
     #[allow(dead_code)]
     topo: ElemTopology,
@@ -85,7 +92,7 @@ impl<T: Scalar> SimplexBasis<T> {
     /// Construct a simplex basis.
     ///
     /// # Parameters
-    /// * `topo`  — element topology (`ElemTopology::Triangle` or `ElemTopology::Tet`).
+    /// * `topo`  — `ElemTopology::Line`, `Triangle`, or `Tet` (other simplex topologies are not implemented here).
     /// * `poly`  — polynomial order (1 = P1, 2 = P2, 3 = P3).
     /// * `ncomp` — number of field components (1 for scalar problems).
     /// * `q`     — number of quadrature points (see module-level table for valid
@@ -95,6 +102,9 @@ impl<T: Scalar> SimplexBasis<T> {
     /// Returns `ReedError::Basis` for unsupported topology/poly/q combinations.
     pub fn new(topo: ElemTopology, poly: usize, ncomp: usize, q: usize) -> ReedResult<Self> {
         let (dim, num_dof) = match (topo, poly) {
+            (ElemTopology::Line, 1) => (1, 2),
+            (ElemTopology::Line, 2) => (1, 3),
+            (ElemTopology::Line, 3) => (1, 4),
             (ElemTopology::Triangle, 1) => (2, 3),
             (ElemTopology::Triangle, 2) => (2, 6),
             (ElemTopology::Triangle, 3) => (2, 10),
@@ -111,9 +121,15 @@ impl<T: Scalar> SimplexBasis<T> {
 
         // Quadrature rule ---------------------------------------------------
         let (q_ref_f64, weights_f64) = match topo {
+            ElemTopology::Line => line_quadrature(q)?,
             ElemTopology::Triangle => tri_quadrature(q)?,
             ElemTopology::Tet => tet_quadrature(q)?,
-            _ => unreachable!(),
+            _ => {
+                return Err(ReedError::Basis(format!(
+                    "SimplexBasis: unsupported topology {:?}",
+                    topo
+                )))
+            }
         };
         let num_qpoints = q_ref_f64.len() / dim;
 
@@ -143,6 +159,9 @@ impl<T: Scalar> SimplexBasis<T> {
 
         for (qi, pt) in qpts.iter().enumerate() {
             let (phi, dphi) = match (topo, poly) {
+                (ElemTopology::Line, 1) => line_p1_basis(pt[0]),
+                (ElemTopology::Line, 2) => line_p2_basis(pt[0]),
+                (ElemTopology::Line, 3) => line_p3_basis(pt[0]),
                 (ElemTopology::Triangle, 1) => tri_p1_basis(pt[0], pt[1]),
                 (ElemTopology::Triangle, 2) => tri_p2_basis(pt[0], pt[1]),
                 (ElemTopology::Triangle, 3) => tri_p3_basis(pt[0], pt[1]),
@@ -344,9 +363,12 @@ impl<T: Scalar> BasisTrait<T> for SimplexBasis<T> {
             }
             EvalMode::Weight => {
                 if transpose {
-                    return Err(ReedError::Basis(
-                        "weight evaluation does not support transpose".into(),
-                    ));
+                    if self.ncomp != 1 {
+                        return Err(ReedError::Basis(
+                            "EvalMode::Weight transpose requires basis.num_comp() == 1".into(),
+                        ));
+                    }
+                    return self.apply(num_elem, true, EvalMode::Interp, u, v);
                 }
                 if v.len() != num_elem * self.num_qpoints {
                     return Err(ReedError::Basis(format!(
@@ -510,6 +532,55 @@ impl<T: Scalar> BasisTrait<T> for SimplexBasis<T> {
 }
 
 // ── shape functions ───────────────────────────────────────────────────────────
+
+/// P1 line on [0,1]: nodes at 0 and 1.
+fn line_p1_basis(t: f64) -> (Vec<f64>, Vec<f64>) {
+    let phi = vec![1.0 - t, t];
+    let dphi = vec![-1.0, 1.0];
+    (phi, dphi)
+}
+
+/// P2 line on [0,1]: nodes at 0, ½, 1.
+fn line_p2_basis(t: f64) -> (Vec<f64>, Vec<f64>) {
+    let phi = vec![
+        2.0 * (t - 0.5) * (t - 1.0),
+        -4.0 * t * (t - 1.0),
+        2.0 * t * (t - 0.5),
+    ];
+    let dphi = vec![
+        2.0 * (2.0 * t - 1.5),
+        -8.0 * t + 4.0,
+        4.0 * t - 1.0,
+    ];
+    (phi, dphi)
+}
+
+/// P3 line on [0,1]: uniform nodes 0, ⅓, ⅔, 1.
+fn line_p3_basis(t: f64) -> (Vec<f64>, Vec<f64>) {
+    let x = [0.0_f64, 1.0 / 3.0, 2.0 / 3.0, 1.0];
+    let n = x.len();
+    let mut phi = vec![0.0; n];
+    let mut dphi = vec![0.0; n];
+    for i in 0..n {
+        let mut l = 1.0;
+        for j in 0..n {
+            if i == j {
+                continue;
+            }
+            l *= (t - x[j]) / (x[i] - x[j]);
+        }
+        phi[i] = l;
+        let mut s = 0.0;
+        for j in 0..n {
+            if i == j {
+                continue;
+            }
+            s += 1.0 / (t - x[j]);
+        }
+        dphi[i] = l * s;
+    }
+    (phi, dphi)
+}
 
 /// P1 triangle basis: φ and ∇φ at (x,y).
 ///
@@ -778,6 +849,25 @@ fn tet_p3_mono_val_grad(x: f64, y: f64, z: f64) -> ([f64; 20], [f64; 20], [f64; 
 }
 
 // ── quadrature rules ─────────────────────────────────────────────────────────
+
+/// Gauss quadrature on reference segment [0,1] (`q` points; maps 1D Legendre Gauss from [-1,1]).
+fn line_quadrature(q: usize) -> ReedResult<(Vec<f64>, Vec<f64>)> {
+    if q < 1 {
+        return Err(ReedError::Basis(format!(
+            "line quadrature: unsupported q={q} (need >= 1)"
+        )));
+    }
+    let (xi, wi) = gauss_quadrature(q)?;
+    let mut pts = Vec::with_capacity(q);
+    let mut wts = Vec::with_capacity(q);
+    for i in 0..q {
+        let t = 0.5 * (xi[i] + 1.0);
+        let w = 0.5 * wi[i];
+        pts.push(t);
+        wts.push(w);
+    }
+    Ok((pts, wts))
+}
 
 /// Triangle Gauss quadrature rules (reference triangle area = 1/2).
 ///
@@ -1070,6 +1160,42 @@ mod tests {
         }
     }
 
+    fn fd_check_line(poly: usize, t: f64, h: f64) {
+        let basis_fn: fn(f64) -> (Vec<f64>, Vec<f64>) = match poly {
+            1 => line_p1_basis,
+            2 => line_p2_basis,
+            3 => line_p3_basis,
+            _ => panic!("fd_check_line: poly {poly}"),
+        };
+        let (_, dphi) = basis_fn(t);
+        let (phi_p, _) = basis_fn(t + h);
+        let (phi_m, _) = basis_fn(t - h);
+        let num_dof = dphi.len();
+        for i in 0..num_dof {
+            let fd = (phi_p[i] - phi_m[i]) / (2.0 * h);
+            let an = dphi[i];
+            assert!(
+                (fd - an).abs() < 1e-7,
+                "line P{poly} dof {i}: FD={fd:.10}, analytic={an:.10}"
+            );
+        }
+    }
+
+    #[test]
+    fn line_p1_gradient_fd() {
+        fd_check_line(1, 0.31, 1e-6);
+    }
+
+    #[test]
+    fn line_p2_gradient_fd() {
+        fd_check_line(2, 0.27, 1e-6);
+    }
+
+    #[test]
+    fn line_p3_gradient_fd() {
+        fd_check_line(3, 0.26, 1e-6);
+    }
+
     #[test]
     fn tri_p1_gradient_fd() {
         fd_check_tri(1, 0.2, 0.3, 1e-6);
@@ -1129,6 +1255,18 @@ mod tests {
     // ── quadrature weight sums ────────────────────────────────────────────
 
     #[test]
+    fn line_quad_weight_sums() {
+        for q in [1usize, 2, 3, 4, 5] {
+            let (_, wts) = line_quadrature(q).unwrap();
+            let sum: f64 = wts.iter().sum();
+            assert!(
+                (sum - 1.0).abs() < 1e-13,
+                "line q={q}: weights sum to {sum}, expected 1.0"
+            );
+        }
+    }
+
+    #[test]
     fn tri_quad_weight_sums() {
         for q in [1usize, 3, 4, 6, 7] {
             let (_, wts) = tri_quadrature(q).unwrap();
@@ -1185,6 +1323,28 @@ mod tests {
             assert!(
                 (*vv - expected).abs() < TOL,
                 "qpt {qi}: got {vv}, expected {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn weight_transpose_matches_interp_transpose_tri_p1_scalar() {
+        let b = SimplexBasis::<f64>::new(ElemTopology::Triangle, 1, 1, 3).unwrap();
+        assert_eq!(b.num_comp(), 1);
+        let ne = 2usize;
+        let u: Vec<f64> = (0..ne * b.num_qpoints())
+            .map(|i| 0.1 * (i + 1) as f64)
+            .collect();
+        let mut v_w = vec![0.0_f64; ne * b.num_dof() * b.num_comp()];
+        let mut v_i = vec![0.0_f64; ne * b.num_dof() * b.num_comp()];
+        b.apply(ne, true, EvalMode::Weight, &u, &mut v_w).unwrap();
+        b.apply(ne, true, EvalMode::Interp, &u, &mut v_i).unwrap();
+        for i in 0..v_w.len() {
+            assert!(
+                (v_w[i] - v_i[i]).abs() < TOL,
+                "i={i} w={} i={}",
+                v_w[i],
+                v_i[i]
             );
         }
     }

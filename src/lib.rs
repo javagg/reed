@@ -15,15 +15,21 @@
 //! not any particular consumer.
 
 pub use reed_core::{
-    Backend, BasisTrait, ClosureQFunction, ElemRestrictionTrait, ElemTopology, EvalMode,
-    OperatorTrait, QFunctionClosure, QFunctionContext, QFunctionField, QFunctionTrait, QuadMode,
+    csr_sparsity_from_offset_lnodes, csr_sparsity_from_offset_restriction, Backend, BasisTrait,
+    CeedInt, CeedMatrix, CeedMatrixStorage, ClosureQFunction, CsrMatrix, CsrPattern,
+    ElemRestrictionTrait, ElemTopology, EvalMode, OperatorAssembleKind, OperatorTrait,
+    OperatorTransposeRequest, QFunctionCategory, QFunctionClosure, QFunctionContext,
+    QFunctionContextField, QFunctionContextFieldKind, QFunctionField, QFunctionTrait, QuadMode,
     ReedError, ReedResult, Scalar, TransposeMode, VectorTrait,
 };
 pub use reed_cpu::{
-    q_function_by_name, CompositeOperator, CpuBackend, FieldVector, OperatorBuilder,
+    q_function_by_name, CompositeOperator, CompositeOperatorBorrowed, CpuBackend,
+    CpuFdmDenseInverseOperator, CpuFdmJacobiInverseOperator, CpuOperator, FDM_DENSE_MAX_N,
+    FieldVector, OperatorBuilder, QFUNCTION_INTERIOR_GALLERY_NAMES,
+    QFUNCTION_LIBCEED_MAIN_GALLERY_NAMES,
 };
 #[cfg(feature = "wgpu-backend")]
-pub use reed_wgpu::WgpuBackend;
+pub use reed_wgpu::{GpuRuntime, WgpuBackend};
 
 use std::sync::Arc;
 
@@ -177,7 +183,7 @@ impl<T: Scalar> Reed<T> {
         ncomp: usize,
         compstride: usize,
         lsize: usize,
-        offsets: &[i32],
+        offsets: &[CeedInt],
     ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>> {
         self.inner
             .elem_restriction(nelem, elemsize, ncomp, compstride, lsize, offsets)
@@ -189,7 +195,7 @@ impl<T: Scalar> Reed<T> {
         elemsize: usize,
         ncomp: usize,
         lsize: usize,
-        strides: [i32; 3],
+        strides: [CeedInt; 3],
     ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>> {
         self.inner
             .strided_elem_restriction(nelem, elemsize, ncomp, lsize, strides)
@@ -203,7 +209,7 @@ impl<T: Scalar> Reed<T> {
         ncomp: usize,
         compstride: usize,
         lsize: usize,
-        offsets: &[i32],
+        offsets: &[CeedInt],
     ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>> {
         self.inner.elem_restriction_at_points(
             nelem,
@@ -213,6 +219,59 @@ impl<T: Scalar> Reed<T> {
             lsize,
             offsets,
         )
+    }
+
+    /// See [`reed_core::Reed::elem_restriction_ceed_int_offsets`].
+    pub fn elem_restriction_ceed_int_offsets(
+        &self,
+        nelem: usize,
+        elemsize: usize,
+        ncomp: usize,
+        compstride: usize,
+        lsize: usize,
+        offsets: &[i64],
+    ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>> {
+        self.inner.elem_restriction_ceed_int_offsets(
+            nelem,
+            elemsize,
+            ncomp,
+            compstride,
+            lsize,
+            offsets,
+        )
+    }
+
+    /// See [`reed_core::Reed::elem_restriction_at_points_ceed_int_offsets`].
+    pub fn elem_restriction_at_points_ceed_int_offsets(
+        &self,
+        nelem: usize,
+        npoints_per_elem: usize,
+        ncomp: usize,
+        compstride: usize,
+        lsize: usize,
+        offsets: &[i64],
+    ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>> {
+        self.inner.elem_restriction_at_points_ceed_int_offsets(
+            nelem,
+            npoints_per_elem,
+            ncomp,
+            compstride,
+            lsize,
+            offsets,
+        )
+    }
+
+    /// See [`reed_core::Reed::strided_elem_restriction_ceed_int_strides`].
+    pub fn strided_elem_restriction_ceed_int_strides(
+        &self,
+        nelem: usize,
+        elemsize: usize,
+        ncomp: usize,
+        lsize: usize,
+        strides: [i64; 3],
+    ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>> {
+        self.inner
+            .strided_elem_restriction_ceed_int_strides(nelem, elemsize, ncomp, lsize, strides)
     }
 
     pub fn basis_tensor_h1_lagrange(
@@ -249,6 +308,18 @@ impl<T: Scalar> Reed<T> {
         CompositeOperator::new(ops)
     }
 
+    /// Same as [`Self::composite_operator`], but composes `&dyn` sub-operators (e.g. two `CpuOperator`
+    /// values that borrow the same mesh in one scope). Matches libCEED-style composition with a shared context.
+    pub fn composite_operator_refs<'a>(
+        &'a self,
+        ops: &[&'a dyn OperatorTrait<T>],
+    ) -> ReedResult<CompositeOperatorBorrowed<'a, T>> {
+        let _ = self;
+        CompositeOperatorBorrowed::new(ops.to_vec())
+    }
+
+    /// User-defined **interior** QFunction — host `apply` path matches [`Self::q_function_exterior`];
+    /// [`QFunctionTrait::q_function_category`] is [`QFunctionCategory::Interior`] (libCEED interior migration marker).
     pub fn q_function_interior(
         &self,
         vector_length: usize,
@@ -267,6 +338,31 @@ impl<T: Scalar> Reed<T> {
             inputs,
             outputs,
             context_byte_len,
+            closure,
+        )))
+    }
+
+    /// User-defined **exterior** (boundary) QFunction — same host evaluation as [`Self::q_function_interior`],
+    /// but reports [`QFunctionCategory::Exterior`] (libCEED exterior / active-side migration marker).
+    pub fn q_function_exterior(
+        &self,
+        vector_length: usize,
+        inputs: Vec<QFunctionField>,
+        outputs: Vec<QFunctionField>,
+        context_byte_len: usize,
+        closure: Box<QFunctionClosure<T>>,
+    ) -> ReedResult<Box<dyn QFunctionTrait<T>>> {
+        let _ = self;
+        if vector_length == 0 {
+            return Err(ReedError::InvalidArgument(
+                "qfunction vector_length must be greater than zero".into(),
+            ));
+        }
+        Ok(Box::new(ClosureQFunction::new_with_category(
+            inputs,
+            outputs,
+            context_byte_len,
+            QFunctionCategory::Exterior,
             closure,
         )))
     }

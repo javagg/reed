@@ -1,9 +1,9 @@
-/// libCEED ex1-volume 对应示例（当前 Reed 支持 1D/2D/3D）
+/// libCEED ex1-volume counterpart example (Reed currently supports 1D/2D/3D).
 ///
-/// 通过质量算子计算测度：
-/// - 1D: 区间长度，理论值 2
-/// - 2D: 正方形面积，理论值 4
-/// - 3D: 立方体体积，理论值 8
+/// Computes measure via the mass operator:
+/// - 1D: interval length, expected value 2
+/// - 2D: square area, expected value 4
+/// - 3D: cube volume, expected value 8
 use reed::{FieldVector, OperatorTrait, QuadMode, Reed};
 use std::env;
 

@@ -1,9 +1,9 @@
 //! Minimal `CompositeOperator` demo (libCEED `CeedCompositeOperator`-style additive apply).
 //!
 //! Uses two simple scaling sub-operators on `R^n` so the composite needs no borrowed mesh data
-//! (`Box<dyn OperatorTrait>` is `'static`). For **assembled** `CpuOperator`s that reference
-//! restrictions/bases, lifetimes are tied to those objects; build the composite in the same
-//! scope as the mesh (see integration tests) or use patterns that yield `'static` operators.
+//! (`Box<dyn OperatorTrait>` is `'static`). For **assembled** `CpuOperator`s that borrow
+//! restrictions/bases, use **`composite_operator_refs`** (see `composite_operator_refs.rs` and
+//! `Reed::composite_operator_refs`).
 
 use reed::{OperatorTrait, Reed, ReedResult, VectorTrait};
 
@@ -13,6 +13,10 @@ struct ScaleOp {
 }
 
 impl OperatorTrait<f64> for ScaleOp {
+    fn global_vector_len_hint(&self) -> Option<usize> {
+        Some(self.n)
+    }
+
     fn apply(
         &self,
         input: &dyn VectorTrait<f64>,
@@ -40,6 +44,16 @@ impl OperatorTrait<f64> for ScaleOp {
         }
         Ok(())
     }
+
+    fn linear_assemble_add_diagonal(
+        &self,
+        assembled: &mut dyn VectorTrait<f64>,
+    ) -> ReedResult<()> {
+        for i in 0..self.n {
+            assembled.as_mut_slice()[i] += self.scale;
+        }
+        Ok(())
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -49,6 +63,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Box::new(ScaleOp { n, scale: 2.0 }),
         Box::new(ScaleOp { n, scale: 3.0 }),
     ])?;
+    composite.check_ready()?;
 
     let x = reed.vector_from_slice(&[1.0_f64, 2.0, 3.0])?;
     let mut y = reed.vector(n)?;

@@ -261,4 +261,141 @@ impl<T: Scalar> QFunctionTrait<T> for MassApply {
         }
         Ok(())
     }
+
+    fn supports_operator_transpose(&self) -> bool {
+        true
+    }
+
+    fn apply_operator_transpose(
+        &self,
+        _ctx: &[u8],
+        q: usize,
+        output_cotangents: &[&[T]],
+        input_cotangents: &mut [&mut [T]],
+    ) -> ReedResult<()> {
+        if output_cotangents.len() != 1 || input_cotangents.len() != 2 {
+            return Err(ReedError::QFunction(
+                "MassApply transpose expects 1 output cotangent and 2 input cotangent buffers".into(),
+            ));
+        }
+        let dv = output_cotangents[0];
+        if dv.len() != q {
+            return Err(ReedError::QFunction(
+                "MassApply transpose: buffer length mismatch".into(),
+            ));
+        }
+        let (du_buf, qdata_fwd) = input_cotangents.split_at_mut(1);
+        let du = &mut du_buf[0];
+        let qdata: &[T] = &qdata_fwd[0];
+        if du.len() != q || qdata.len() != q {
+            return Err(ReedError::QFunction(
+                "MassApply transpose: buffer length mismatch".into(),
+            ));
+        }
+        for i in 0..q {
+            du[i] += dv[i] * qdata[i];
+        }
+        Ok(())
+    }
+}
+
+/// `"MassApplyInterpTimesWeight"` — same quadrature kernel as [`MassApply`], but the second input is
+/// declared as [`EvalMode::Weight`] so operator assembly exercises the basis **Weight** slot (forward
+/// values are still the quadrature weights from the basis; discrete transpose matches [`MassApply`]).
+/// Alias: **`MassApplyInterpTimesWeightAtPoints`** (same implementation; libCEED-style AtPoints naming).
+pub struct MassApplyInterpTimesWeight {
+    inputs: Vec<QFunctionField>,
+    outputs: Vec<QFunctionField>,
+}
+
+impl Default for MassApplyInterpTimesWeight {
+    fn default() -> Self {
+        Self {
+            inputs: vec![
+                QFunctionField {
+                    name: "u".into(),
+                    num_comp: 1,
+                    eval_mode: EvalMode::Interp,
+                },
+                QFunctionField {
+                    name: "w".into(),
+                    num_comp: 1,
+                    eval_mode: EvalMode::Weight,
+                },
+            ],
+            outputs: vec![QFunctionField {
+                name: "v".into(),
+                num_comp: 1,
+                eval_mode: EvalMode::Interp,
+            }],
+        }
+    }
+}
+
+impl<T: Scalar> QFunctionTrait<T> for MassApplyInterpTimesWeight {
+    fn inputs(&self) -> &[QFunctionField] {
+        &self.inputs
+    }
+
+    fn outputs(&self) -> &[QFunctionField] {
+        &self.outputs
+    }
+
+    fn apply(
+        &self,
+        _ctx: &[u8],
+        q: usize,
+        inputs: &[&[T]],
+        outputs: &mut [&mut [T]],
+    ) -> ReedResult<()> {
+        if inputs.len() != 2 || outputs.len() != 1 {
+            return Err(ReedError::QFunction(
+                "MassApplyInterpTimesWeight expects 2 inputs and 1 output".into(),
+            ));
+        }
+        let u = inputs[0];
+        let w = inputs[1];
+        let v = &mut outputs[0];
+        for i in 0..q {
+            v[i] = u[i] * w[i];
+        }
+        Ok(())
+    }
+
+    fn supports_operator_transpose(&self) -> bool {
+        true
+    }
+
+    fn apply_operator_transpose(
+        &self,
+        _ctx: &[u8],
+        q: usize,
+        output_cotangents: &[&[T]],
+        input_cotangents: &mut [&mut [T]],
+    ) -> ReedResult<()> {
+        if output_cotangents.len() != 1 || input_cotangents.len() != 2 {
+            return Err(ReedError::QFunction(
+                "MassApplyInterpTimesWeight transpose expects 1 output cotangent and 2 input cotangent buffers"
+                    .into(),
+            ));
+        }
+        let dv = output_cotangents[0];
+        if dv.len() != q {
+            return Err(ReedError::QFunction(
+                "MassApplyInterpTimesWeight transpose: buffer length mismatch".into(),
+            ));
+        }
+        let (du_buf, w_fwd) = input_cotangents.split_at_mut(1);
+        let du = &mut du_buf[0];
+        let w: &[T] = &w_fwd[0];
+        if du.len() != q || w.len() != q {
+            return Err(ReedError::QFunction(
+                "MassApplyInterpTimesWeight transpose: buffer length mismatch".into(),
+            ));
+        }
+        for i in 0..q {
+            du[i] += dv[i] * w[i];
+        }
+        Ok(())
+    }
 }

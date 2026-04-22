@@ -2,15 +2,19 @@
 
 Current status: ex1/ex2/ex3 examples support 1D, 2D, and 3D with Reed gallery QFunctions. Named entries under `Reed::q_function_by_name` match libCEED’s `ceed-gallery-list.h` where implemented (see `design_mapping.md`, section 5).
 
+**Operator migration (libCEED `CeedOperator`):** CPU-side parity for apply / apply-add / diagonal assembly / `check_ready` and active input vs output sizes is summarized in `design_mapping.md` **§4.5.1** (closed scope vs deferred items).
+
 ```bash
 cargo run --example ex1_volume
 cargo run --example ex2_surface
 cargo run --example ex3_volume_combined
 cargo run --example poisson
+cargo run --example mass_operator
 cargo run --example composite_operator
+cargo run --example composite_operator_refs
 ```
 
-`composite_operator` 演示加法型 `CompositeOperator`（对照 libCEED `CeedCompositeOperator`）；详见 `design_mapping.md` §8.2。
+`mass_operator` 演示 `Mass1DBuild` + `MassApply` 及 **`OperatorTrait::check_ready`** 与 **非对称** `active_input_global_len` / `active_output_global_len`。`composite_operator` 演示带 `'static` 的 `Box<dyn>` 子算子之和；`composite_operator_refs` 演示同一作用域内两个 `CpuOperator` 借用共享网格时的组合（对照 libCEED 在同一 `Ceed` 下组合句柄）。详见 `design_mapping.md` §8.2 与 §4.5.1。
 
 ### ex1_volume optional args
 

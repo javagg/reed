@@ -3,16 +3,17 @@ mod elem_restriction;
 mod runtime;
 mod vector;
 
-use crate::runtime::GpuRuntime;
+pub use runtime::GpuRuntime;
 use reed_core::{
     enums::*,
     error::{ReedError, ReedResult},
     scalar::Scalar,
+    types::CeedInt,
     BasisTrait, ElemRestrictionTrait, VectorTrait,
 };
 use std::sync::Arc;
 
-/// 后端工厂 trait（各后端实现此 trait）
+/// Backend factory trait (implemented by each backend).
 #[cfg(not(target_arch = "wasm32"))]
 pub trait Backend<T: Scalar>: Send + Sync {
     fn resource_name(&self) -> &str;
@@ -26,7 +27,7 @@ pub trait Backend<T: Scalar>: Send + Sync {
         ncomp: usize,
         compstride: usize,
         lsize: usize,
-        offsets: &[i32],
+        offsets: &[CeedInt],
     ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>>;
 
     fn create_strided_elem_restriction(
@@ -35,7 +36,7 @@ pub trait Backend<T: Scalar>: Send + Sync {
         elemsize: usize,
         ncomp: usize,
         lsize: usize,
-        strides: [i32; 3],
+        strides: [CeedInt; 3],
     ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>>;
 
     fn create_basis_tensor_h1_lagrange(
@@ -70,7 +71,7 @@ pub trait Backend<T: Scalar> {
         ncomp: usize,
         compstride: usize,
         lsize: usize,
-        offsets: &[i32],
+        offsets: &[CeedInt],
     ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>>;
 
     fn create_strided_elem_restriction(
@@ -79,7 +80,7 @@ pub trait Backend<T: Scalar> {
         elemsize: usize,
         ncomp: usize,
         lsize: usize,
-        strides: [i32; 3],
+        strides: [CeedInt; 3],
     ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>>;
 
     fn create_basis_tensor_h1_lagrange(
@@ -198,6 +199,11 @@ impl<T: Scalar> WgpuBackend<T> {
     pub fn adapter_name(&self) -> Option<&str> {
         self.adapter_name.as_deref()
     }
+
+    /// GPU compute runtime when [`Self::is_gpu_available`] is true.
+    pub fn gpu_runtime(&self) -> Option<&Arc<GpuRuntime>> {
+        self.runtime.as_ref()
+    }
 }
 
 // Also implement reed_core::Backend so it satisfies reed::Backend (= reed_core::Backend).
@@ -222,7 +228,7 @@ impl<T: Scalar> reed_core::Backend<T> for WgpuBackend<T> {
         ncomp: usize,
         compstride: usize,
         lsize: usize,
-        offsets: &[i32],
+        offsets: &[CeedInt],
     ) -> reed_core::ReedResult<Box<dyn reed_core::ElemRestrictionTrait<T>>> {
         Backend::<T>::create_elem_restriction(
             self, nelem, elemsize, ncomp, compstride, lsize, offsets,
@@ -235,7 +241,7 @@ impl<T: Scalar> reed_core::Backend<T> for WgpuBackend<T> {
         elemsize: usize,
         ncomp: usize,
         lsize: usize,
-        strides: [i32; 3],
+        strides: [CeedInt; 3],
     ) -> reed_core::ReedResult<Box<dyn reed_core::ElemRestrictionTrait<T>>> {
         Backend::<T>::create_strided_elem_restriction(self, nelem, elemsize, ncomp, lsize, strides)
     }
@@ -283,7 +289,7 @@ impl<T: Scalar> Backend<T> for WgpuBackend<T> {
         ncomp: usize,
         compstride: usize,
         lsize: usize,
-        offsets: &[i32],
+        offsets: &[CeedInt],
     ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>> {
         Ok(Box::new(
             crate::elem_restriction::WgpuElemRestriction::<T>::new_offset(
@@ -304,7 +310,7 @@ impl<T: Scalar> Backend<T> for WgpuBackend<T> {
         elemsize: usize,
         ncomp: usize,
         lsize: usize,
-        strides: [i32; 3],
+        strides: [CeedInt; 3],
     ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>> {
         Ok(Box::new(
             crate::elem_restriction::WgpuElemRestriction::<T>::new_strided(
@@ -369,7 +375,7 @@ impl<T: Scalar> reed_core::Backend<T> for WgpuBackend<T> {
         ncomp: usize,
         compstride: usize,
         lsize: usize,
-        offsets: &[i32],
+        offsets: &[CeedInt],
     ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>> {
         Ok(Box::new(
             crate::elem_restriction::WgpuElemRestriction::<T>::new_offset(
@@ -390,7 +396,7 @@ impl<T: Scalar> reed_core::Backend<T> for WgpuBackend<T> {
         elemsize: usize,
         ncomp: usize,
         lsize: usize,
-        strides: [i32; 3],
+        strides: [CeedInt; 3],
     ) -> ReedResult<Box<dyn ElemRestrictionTrait<T>>> {
         Ok(Box::new(
             crate::elem_restriction::WgpuElemRestriction::<T>::new_strided(

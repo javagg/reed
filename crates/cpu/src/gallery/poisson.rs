@@ -247,6 +247,49 @@ impl<T: Scalar> QFunctionTrait<T> for Poisson2DApply {
         }
         Ok(())
     }
+
+    fn supports_operator_transpose(&self) -> bool {
+        true
+    }
+
+    fn apply_operator_transpose(
+        &self,
+        _ctx: &[u8],
+        q: usize,
+        output_cotangents: &[&[T]],
+        input_cotangents: &mut [&mut [T]],
+    ) -> ReedResult<()> {
+        if output_cotangents.len() != 1 || input_cotangents.len() != 2 {
+            return Err(ReedError::QFunction(
+                "Poisson2DApply transpose expects 1 output cotangent and 2 input buffers".into(),
+            ));
+        }
+        let ddv = output_cotangents[0];
+        if ddv.len() != q * 2 {
+            return Err(ReedError::QFunction(
+                "Poisson2DApply transpose: buffer length mismatch".into(),
+            ));
+        }
+        let (ddu_buf, qdata_fwd) = input_cotangents.split_at_mut(1);
+        let ddu = &mut ddu_buf[0];
+        let qdata: &[T] = &qdata_fwd[0];
+        if ddu.len() != q * 2 || qdata.len() != q * 4 {
+            return Err(ReedError::QFunction(
+                "Poisson2DApply transpose: buffer length mismatch".into(),
+            ));
+        }
+        for i in 0..q {
+            let ddv0 = ddv[i * 2];
+            let ddv1 = ddv[i * 2 + 1];
+            let g00 = qdata[i * 4];
+            let g01 = qdata[i * 4 + 1];
+            let g10 = qdata[i * 4 + 2];
+            let g11 = qdata[i * 4 + 3];
+            ddu[i * 2] += g00 * ddv0 + g10 * ddv1;
+            ddu[i * 2 + 1] += g01 * ddv0 + g11 * ddv1;
+        }
+        Ok(())
+    }
 }
 
 impl Default for Poisson3DBuild {
@@ -419,6 +462,56 @@ impl<T: Scalar> QFunctionTrait<T> for Poisson3DApply {
         }
         Ok(())
     }
+
+    fn supports_operator_transpose(&self) -> bool {
+        true
+    }
+
+    fn apply_operator_transpose(
+        &self,
+        _ctx: &[u8],
+        q: usize,
+        output_cotangents: &[&[T]],
+        input_cotangents: &mut [&mut [T]],
+    ) -> ReedResult<()> {
+        if output_cotangents.len() != 1 || input_cotangents.len() != 2 {
+            return Err(ReedError::QFunction(
+                "Poisson3DApply transpose expects 1 output cotangent and 2 input buffers".into(),
+            ));
+        }
+        let ddv = output_cotangents[0];
+        if ddv.len() != q * 3 {
+            return Err(ReedError::QFunction(
+                "Poisson3DApply transpose: buffer length mismatch".into(),
+            ));
+        }
+        let (ddu_buf, qdata_fwd) = input_cotangents.split_at_mut(1);
+        let ddu = &mut ddu_buf[0];
+        let qdata: &[T] = &qdata_fwd[0];
+        if ddu.len() != q * 3 || qdata.len() != q * 9 {
+            return Err(ReedError::QFunction(
+                "Poisson3DApply transpose: buffer length mismatch".into(),
+            ));
+        }
+        for i in 0..q {
+            let ddv0 = ddv[i * 3];
+            let ddv1 = ddv[i * 3 + 1];
+            let ddv2 = ddv[i * 3 + 2];
+            let g00 = qdata[i * 9];
+            let g01 = qdata[i * 9 + 1];
+            let g02 = qdata[i * 9 + 2];
+            let g10 = qdata[i * 9 + 3];
+            let g11 = qdata[i * 9 + 4];
+            let g12 = qdata[i * 9 + 5];
+            let g20 = qdata[i * 9 + 6];
+            let g21 = qdata[i * 9 + 7];
+            let g22 = qdata[i * 9 + 8];
+            ddu[i * 3] += g00 * ddv0 + g10 * ddv1 + g20 * ddv2;
+            ddu[i * 3 + 1] += g01 * ddv0 + g11 * ddv1 + g21 * ddv2;
+            ddu[i * 3 + 2] += g02 * ddv0 + g12 * ddv1 + g22 * ddv2;
+        }
+        Ok(())
+    }
 }
 
 impl Default for Poisson1DApply {
@@ -471,6 +564,43 @@ impl<T: Scalar> QFunctionTrait<T> for Poisson1DApply {
         let dv = &mut outputs[0];
         for i in 0..q {
             dv[i] = du[i] * qdata[i];
+        }
+        Ok(())
+    }
+
+    fn supports_operator_transpose(&self) -> bool {
+        true
+    }
+
+    fn apply_operator_transpose(
+        &self,
+        _ctx: &[u8],
+        q: usize,
+        output_cotangents: &[&[T]],
+        input_cotangents: &mut [&mut [T]],
+    ) -> ReedResult<()> {
+        if output_cotangents.len() != 1 || input_cotangents.len() != 2 {
+            return Err(ReedError::QFunction(
+                "Poisson1DApply transpose expects 1 output cotangent and 2 input cotangent buffers"
+                    .into(),
+            ));
+        }
+        let ddv = output_cotangents[0];
+        if ddv.len() != q {
+            return Err(ReedError::QFunction(
+                "Poisson1DApply transpose: buffer length mismatch".into(),
+            ));
+        }
+        let (ddu_buf, qdata_fwd) = input_cotangents.split_at_mut(1);
+        let ddu = &mut ddu_buf[0];
+        let qdata: &[T] = &qdata_fwd[0];
+        if ddu.len() != q || qdata.len() != q {
+            return Err(ReedError::QFunction(
+                "Poisson1DApply transpose: buffer length mismatch".into(),
+            ));
+        }
+        for i in 0..q {
+            ddu[i] += ddv[i] * qdata[i];
         }
         Ok(())
     }

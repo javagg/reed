@@ -1345,6 +1345,15 @@ impl<T: Scalar> BasisTrait<T> for WgpuBasis<T> {
         {
             return Ok(());
         }
+        // Scalar `Weight` transpose matches `Interp` transpose (CPU `LagrangeBasis`); reuse the
+        // f32 interpᵀ GPU kernel when available.
+        if matches!(eval_mode, EvalMode::Weight)
+            && transpose
+            && self.cpu_fallback.num_comp() == 1
+            && self.try_apply_interp_gpu(num_elem, true, u, v)?
+        {
+            return Ok(());
+        }
         self.cpu_fallback
             .apply(num_elem, transpose, eval_mode, u, v)
     }
@@ -1425,4 +1434,75 @@ fn map_readback_f32(
     drop(data);
     readback.unmap();
     Ok(())
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod wgpu_basis_tests {
+    use std::sync::Arc;
+
+    use reed_core::{BasisTrait, EvalMode, QuadMode};
+    use reed_cpu::basis_lagrange::LagrangeBasis;
+
+    use super::WgpuBasis;
+    use crate::runtime::GpuRuntime;
+
+    fn gpu_runtime_or_skip() -> Option<GpuRuntime> {
+        let instance = wgpu::Instance::default();
+        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            force_fallback_adapter: false,
+            compatible_surface: None,
+        }))?;
+        GpuRuntime::new(&adapter)
+    }
+
+    #[test]
+    fn wgpu_weight_transpose_matches_interp_transpose_f32() {
+        let Some(rt) = gpu_runtime_or_skip() else {
+            return;
+        };
+        let b = WgpuBasis::<f32>::new(1, 1, 2, 2, QuadMode::Gauss, Some(Arc::new(rt))).unwrap();
+        assert_eq!(b.num_comp(), 1);
+        let ne = 2usize;
+        let u: Vec<f32> = (0..ne * b.num_qpoints())
+            .map(|i| 0.1 * (i + 1) as f32)
+            .collect();
+        let mut v_w = vec![0.0_f32; ne * b.num_dof() * b.num_comp()];
+        let mut v_i = vec![0.0_f32; ne * b.num_dof() * b.num_comp()];
+        b.apply(ne, true, EvalMode::Weight, &u, &mut v_w).unwrap();
+        b.apply(ne, true, EvalMode::Interp, &u, &mut v_i).unwrap();
+        for i in 0..v_w.len() {
+            assert!(
+                (v_w[i] - v_i[i]).abs() < 1e-5,
+                "i={i} w={} i={}",
+                v_w[i],
+                v_i[i]
+            );
+        }
+    }
+
+    #[test]
+    fn wgpu_weight_transpose_matches_cpu_lagrange_reference() {
+        let Some(rt) = gpu_runtime_or_skip() else {
+            return;
+        };
+        let gpu = WgpuBasis::<f32>::new(1, 1, 2, 2, QuadMode::Gauss, Some(Arc::new(rt))).unwrap();
+        let cpu = LagrangeBasis::<f32>::new(1, 1, 2, 2, QuadMode::Gauss).unwrap();
+        let ne = 2usize;
+        let u: Vec<f32> = (0..ne * gpu.num_qpoints())
+            .map(|i| 0.07 * (i as i32 - 3) as f32)
+            .collect();
+        let mut v_gpu = vec![0.0_f32; ne * gpu.num_dof()];
+        let mut v_cpu = vec![0.0_f32; ne * cpu.num_dof()];
+        gpu.apply(ne, true, EvalMode::Weight, &u, &mut v_gpu).unwrap();
+        cpu.apply(ne, true, EvalMode::Weight, &u, &mut v_cpu).unwrap();
+        for i in 0..v_gpu.len() {
+            assert!(
+                (v_gpu[i] - v_cpu[i]).abs() < 1e-5,
+                "i={i} gpu={} cpu={}",
+                v_gpu[i],
+                v_cpu[i]
+            );
+        }
+    }
 }
