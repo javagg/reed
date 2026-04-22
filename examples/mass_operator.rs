@@ -1,7 +1,10 @@
 //! Minimal mass pipeline: `Mass1DBuild` then `MassApply`, with libCEED-style `check_ready` and
 //! explicit active input/output sizes (asymmetric build vs square apply). See `design_mapping.md` §4.5.1.
 
-use reed::{CpuOperator, FieldVector, OperatorTrait, QuadMode, Reed};
+use reed::{
+    CeedMatrix, CeedMatrixStorage, CpuOperator, FieldVector, OperatorAssembleKind, OperatorTrait,
+    QuadMode, Reed,
+};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let reed = Reed::<f64>::init("/cpu/self")?;
@@ -52,6 +55,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "MassApply active_global_dof_len={:?}",
         op_mass.active_global_dof_len()
     );
+    println!(
+        "MassApply supports: Diagonal={} Dense={} CSR={} FDM={}",
+        op_mass.operator_supports_assemble(OperatorAssembleKind::Diagonal),
+        op_mass.operator_supports_assemble(OperatorAssembleKind::LinearNumeric),
+        op_mass.operator_supports_assemble(OperatorAssembleKind::LinearCsrNumeric),
+        op_mass.operator_supports_assemble(OperatorAssembleKind::FdmElementInverse),
+    );
+
+    let mut dense = CeedMatrix::<f64>::dense_col_major_symbolic(ndofs, ndofs)?;
+    OperatorTrait::linear_assemble_ceed_matrix(&op_mass, &mut dense)?;
+    let dense_once = match dense.storage() {
+        CeedMatrixStorage::DenseColMajor { values, .. } => values.clone(),
+        _ => unreachable!(),
+    };
+    OperatorTrait::linear_assemble_add_ceed_matrix(&op_mass, &mut dense)?;
+    if let CeedMatrixStorage::DenseColMajor { values, .. } = dense.storage() {
+        println!("Dense handle A(0,0)={} after add={}", dense_once[0], values[0]);
+    }
 
     let u = reed.vector_from_slice(&vec![1.0_f64; ndofs])?;
     let mut v = reed.vector(ndofs)?;
@@ -61,5 +82,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut values = vec![0.0; ndofs];
     v.copy_to_slice(&mut values)?;
     println!("mass operator output: {values:?}");
+
+    let pat = r_u.assembled_csr_pattern()?;
+    let mut csr = CeedMatrix::<f64>::csr_symbolic(pat);
+    OperatorTrait::linear_assemble_ceed_matrix(&op_mass, &mut csr)?;
+    let csr_once = match csr.storage() {
+        CeedMatrixStorage::Csr(m) => m.values.clone(),
+        _ => unreachable!(),
+    };
+    OperatorTrait::linear_assemble_add_ceed_matrix(&op_mass, &mut csr)?;
+    if let CeedMatrixStorage::Csr(m) = csr.storage() {
+        println!("CSR handle A(0)={} after add={}", csr_once[0], m.values[0]);
+    }
+
     Ok(())
 }

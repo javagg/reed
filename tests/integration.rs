@@ -263,12 +263,12 @@ fn test_cpu_operator_ceed_matrix_handle_and_jacobi_inverse_paths() {
         .unwrap();
 
     let mut dense = CeedMatrix::<f64>::dense_col_major_symbolic(ndofs, ndofs).unwrap();
-    op.linear_assemble_ceed_matrix(&mut dense).unwrap();
+    OperatorTrait::linear_assemble_ceed_matrix(&op, &mut dense).unwrap();
     let dense_once = match dense.storage() {
         CeedMatrixStorage::DenseColMajor { values, .. } => values.clone(),
         _ => panic!("expected dense handle"),
     };
-    op.linear_assemble_add_ceed_matrix(&mut dense).unwrap();
+    OperatorTrait::linear_assemble_add_ceed_matrix(&op, &mut dense).unwrap();
     match dense.storage() {
         CeedMatrixStorage::DenseColMajor { values, .. } => {
             for i in 0..values.len() {
@@ -280,12 +280,12 @@ fn test_cpu_operator_ceed_matrix_handle_and_jacobi_inverse_paths() {
 
     let pat = r_u.assembled_csr_pattern().unwrap();
     let mut csr = CeedMatrix::<f64>::csr_symbolic(pat);
-    op.linear_assemble_ceed_matrix(&mut csr).unwrap();
+    OperatorTrait::linear_assemble_ceed_matrix(&op, &mut csr).unwrap();
     let csr_once = match csr.storage() {
         CeedMatrixStorage::Csr(m) => m.values.clone(),
         _ => panic!("expected csr handle"),
     };
-    op.linear_assemble_add_ceed_matrix(&mut csr).unwrap();
+    OperatorTrait::linear_assemble_add_ceed_matrix(&op, &mut csr).unwrap();
     match csr.storage() {
         CeedMatrixStorage::Csr(m) => {
             for (i, &v) in m.values.iter().enumerate() {
@@ -295,7 +295,7 @@ fn test_cpu_operator_ceed_matrix_handle_and_jacobi_inverse_paths() {
         _ => panic!("expected csr handle"),
     }
 
-    let jac = op.operator_create_fdm_element_inverse_jacobi().unwrap();
+    let jac = OperatorTrait::operator_create_fdm_element_inverse_jacobi(&op).unwrap();
     let x = reed.vector_from_slice(&[2.0_f64, -3.0]).unwrap();
     let mut y = reed.vector(ndofs).unwrap();
     y.set_value(0.0).unwrap();
@@ -1104,6 +1104,132 @@ fn test_composite_operator_refs_two_mass_matches_double_single() {
         .zip(y_single.as_slice().iter())
     {
         assert!((a - b).abs() < 50.0 * f64::EPSILON, "composite {a} vs 2*single {b}");
+    }
+}
+
+#[test]
+fn test_composite_operator_refs_ceed_matrix_fallback_sum_suboperators() {
+    fn assemble_with_composite_fallback(
+        composite: &dyn OperatorTrait<f64>,
+        subops: &[&dyn OperatorTrait<f64>],
+        matrix: &mut CeedMatrix<f64>,
+    ) -> ReedResult<bool> {
+        match OperatorTrait::linear_assemble_ceed_matrix(composite, matrix) {
+            Ok(()) => Ok(false),
+            Err(_) => {
+                matrix.clear_numeric_values();
+                for op in subops {
+                    OperatorTrait::linear_assemble_add_ceed_matrix(*op, matrix)?;
+                }
+                Ok(true)
+            }
+        }
+    }
+
+    let reed = Reed::<f64>::init("/cpu/self").unwrap();
+    let nelem = 2usize;
+    let p = 2usize;
+    let q = 2usize;
+    let ndofs = nelem + 1;
+
+    let node_coords = vec![-1.0, 0.0, 1.0];
+    let x_coord = reed.vector_from_slice(&node_coords).unwrap();
+    let mut qdata = reed.vector(nelem * q).unwrap();
+    qdata.set_value(0.0).unwrap();
+
+    let ind_x = vec![0, 1, 1, 2];
+    let ind_u = ind_x.clone();
+
+    let r_x = reed
+        .elem_restriction(nelem, 2, 1, 1, ndofs, &ind_x)
+        .unwrap();
+    let r_u = reed
+        .elem_restriction(nelem, p, 1, 1, ndofs, &ind_u)
+        .unwrap();
+    let r_q = reed
+        .strided_elem_restriction(nelem, q, 1, nelem * q, [1, q as i32, q as i32])
+        .unwrap();
+
+    let b_x = reed
+        .basis_tensor_h1_lagrange(1, 1, 2, q, QuadMode::Gauss)
+        .unwrap();
+    let b_u = reed
+        .basis_tensor_h1_lagrange(1, 1, p, q, QuadMode::Gauss)
+        .unwrap();
+
+    let build_mass = reed
+        .operator_builder()
+        .qfunction(reed.q_function_by_name("Mass1DBuild").unwrap())
+        .field("dx", Some(&*r_x), Some(&*b_x), FieldVector::Active)
+        .field("weights", None, Some(&*b_x), FieldVector::None)
+        .field("qdata", Some(&*r_q), None, FieldVector::Active)
+        .build()
+        .unwrap();
+    build_mass.apply(&*x_coord, &mut *qdata).unwrap();
+
+    let op_a = reed
+        .operator_builder()
+        .qfunction(reed.q_function_by_name("MassApply").unwrap())
+        .field("u", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+        .field("qdata", Some(&*r_q), None, FieldVector::Passive(&*qdata))
+        .field("v", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+        .build()
+        .unwrap();
+    let op_b = reed
+        .operator_builder()
+        .qfunction(reed.q_function_by_name("MassApply").unwrap())
+        .field("u", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+        .field("qdata", Some(&*r_q), None, FieldVector::Passive(&*qdata))
+        .field("v", Some(&*r_u), Some(&*b_u), FieldVector::Active)
+        .build()
+        .unwrap();
+    let composite = reed.composite_operator_refs(&[&op_a, &op_b]).unwrap();
+    let subops: [&dyn OperatorTrait<f64>; 2] = [&op_a, &op_b];
+
+    let mut dense = CeedMatrix::<f64>::dense_col_major_symbolic(ndofs, ndofs).unwrap();
+    let dense_fallback_used = assemble_with_composite_fallback(&composite, &subops, &mut dense)
+        .expect("dense fallback assembly should succeed");
+    assert!(
+        dense_fallback_used,
+        "composite dense-handle assembly should fallback to sub-operator sum"
+    );
+    match dense.storage() {
+        CeedMatrixStorage::DenseColMajor { values, .. } => {
+            let mut dense_single = CeedMatrix::<f64>::dense_col_major_symbolic(ndofs, ndofs).unwrap();
+            OperatorTrait::linear_assemble_ceed_matrix(&op_a, &mut dense_single).unwrap();
+            let single_vals = match dense_single.storage() {
+                CeedMatrixStorage::DenseColMajor { values, .. } => values,
+                _ => unreachable!("single dense matrix should be DenseColMajor"),
+            };
+            for (sum, single) in values.iter().zip(single_vals.iter()) {
+                assert!((sum - 2.0 * single).abs() < 1e-12);
+            }
+        }
+        _ => unreachable!("dense matrix should be DenseColMajor"),
+    }
+
+    let pat = r_u.assembled_csr_pattern().unwrap();
+    let mut csr = CeedMatrix::<f64>::csr_symbolic(pat);
+    let csr_fallback_used = assemble_with_composite_fallback(&composite, &subops, &mut csr)
+        .expect("csr fallback assembly should succeed");
+    assert!(
+        csr_fallback_used,
+        "composite csr-handle assembly should fallback to sub-operator sum"
+    );
+    match csr.storage() {
+        CeedMatrixStorage::Csr(m) => {
+            let pat_single = r_u.assembled_csr_pattern().unwrap();
+            let mut csr_single = CeedMatrix::<f64>::csr_symbolic(pat_single);
+            OperatorTrait::linear_assemble_ceed_matrix(&op_a, &mut csr_single).unwrap();
+            let single_vals = match csr_single.storage() {
+                CeedMatrixStorage::Csr(m) => &m.values,
+                _ => unreachable!("single csr matrix should be CSR"),
+            };
+            for (sum, single) in m.values.iter().zip(single_vals.iter()) {
+                assert!((sum - 2.0 * single).abs() < 1e-12);
+            }
+        }
+        _ => unreachable!("csr matrix should be CSR"),
     }
 }
 

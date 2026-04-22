@@ -29,6 +29,7 @@
 use reed_core::{
     csr::{CsrMatrix, CsrPattern},
     error::{ReedError, ReedResult},
+    matrix::CeedMatrix,
     operator::{OperatorAssembleKind, OperatorTrait, OperatorTransposeRequest},
     scalar::Scalar,
     vector::VectorTrait,
@@ -339,9 +340,30 @@ impl<T: Scalar> OperatorTrait<T> for CompositeOperator<T> {
         ))
     }
 
+    fn linear_assemble_ceed_matrix(&self, _matrix: &mut CeedMatrix<T>) -> ReedResult<()> {
+        Err(ReedError::Operator(
+            "CompositeOperator: linear_assemble_ceed_matrix is not supported (call on each sub-operator)"
+                .into(),
+        ))
+    }
+
+    fn linear_assemble_add_ceed_matrix(&self, _matrix: &mut CeedMatrix<T>) -> ReedResult<()> {
+        Err(ReedError::Operator(
+            "CompositeOperator: linear_assemble_add_ceed_matrix is not supported (call on each sub-operator)"
+                .into(),
+        ))
+    }
+
     fn operator_create_fdm_element_inverse(&self) -> ReedResult<Box<dyn OperatorTrait<T>>> {
         Err(ReedError::Operator(
             "CompositeOperator: operator_create_fdm_element_inverse is not supported (use a single-element operator)"
+                .into(),
+        ))
+    }
+
+    fn operator_create_fdm_element_inverse_jacobi(&self) -> ReedResult<Box<dyn OperatorTrait<T>>> {
+        Err(ReedError::Operator(
+            "CompositeOperator: operator_create_fdm_element_inverse_jacobi is not supported (use a single-element operator)"
                 .into(),
         ))
     }
@@ -612,9 +634,30 @@ impl<'a, T: Scalar> OperatorTrait<T> for CompositeOperatorBorrowed<'a, T> {
         ))
     }
 
+    fn linear_assemble_ceed_matrix(&self, _matrix: &mut CeedMatrix<T>) -> ReedResult<()> {
+        Err(ReedError::Operator(
+            "CompositeOperatorBorrowed: linear_assemble_ceed_matrix is not supported (call on each sub-operator)"
+                .into(),
+        ))
+    }
+
+    fn linear_assemble_add_ceed_matrix(&self, _matrix: &mut CeedMatrix<T>) -> ReedResult<()> {
+        Err(ReedError::Operator(
+            "CompositeOperatorBorrowed: linear_assemble_add_ceed_matrix is not supported (call on each sub-operator)"
+                .into(),
+        ))
+    }
+
     fn operator_create_fdm_element_inverse(&self) -> ReedResult<Box<dyn OperatorTrait<T>>> {
         Err(ReedError::Operator(
             "CompositeOperatorBorrowed: operator_create_fdm_element_inverse is not supported (use a single-element operator)"
+                .into(),
+        ))
+    }
+
+    fn operator_create_fdm_element_inverse_jacobi(&self) -> ReedResult<Box<dyn OperatorTrait<T>>> {
+        Err(ReedError::Operator(
+            "CompositeOperatorBorrowed: operator_create_fdm_element_inverse_jacobi is not supported (use a single-element operator)"
                 .into(),
         ))
     }
@@ -873,6 +916,22 @@ mod tests {
     }
 
     #[test]
+    fn composite_operator_create_fdm_element_inverse_jacobi_errors() {
+        let c = CompositeOperator::new(vec![Box::new(ScaleOp { n: 2, scale: 1.0 })
+            as Box<dyn OperatorTrait<f64>>])
+        .unwrap();
+        let msg = match c.operator_create_fdm_element_inverse_jacobi() {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("expected Jacobi FDM inverse on composite to fail"),
+        };
+        assert!(
+            msg.contains("CompositeOperator")
+                && msg.contains("operator_create_fdm_element_inverse_jacobi"),
+            "{msg}"
+        );
+    }
+
+    #[test]
     fn composite_linear_assemble_add_errors() {
         let c = CompositeOperator::new(vec![Box::new(ScaleOp { n: 2, scale: 1.0 })
             as Box<dyn OperatorTrait<f64>>])
@@ -902,6 +961,22 @@ mod tests {
         let msg = c.linear_assemble_csr_matrix_add(&mut m).unwrap_err().to_string();
         assert!(
             msg.contains("CompositeOperator") && msg.contains("linear_assemble_csr_matrix_add"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn composite_linear_assemble_ceed_matrix_errors() {
+        let c = CompositeOperator::new(vec![Box::new(ScaleOp { n: 2, scale: 1.0 })
+            as Box<dyn OperatorTrait<f64>>])
+        .unwrap();
+        let mut dense = CeedMatrix::<f64>::dense_col_major_symbolic(2, 2).unwrap();
+        let msg = c
+            .linear_assemble_ceed_matrix(&mut dense)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            msg.contains("CompositeOperator") && msg.contains("linear_assemble_ceed_matrix"),
             "{msg}"
         );
     }
@@ -945,6 +1020,47 @@ mod tests {
         assert!(
             msg.contains("CompositeOperatorBorrowed")
                 && msg.contains("linear_assemble_csr_matrix_add"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn composite_borrowed_linear_assemble_add_ceed_matrix_errors() {
+        let a = ScaleOp { n: 2, scale: 1.0 };
+        let b = ScaleOp { n: 2, scale: 2.0 };
+        let c = CompositeOperatorBorrowed::new(vec![
+            &a as &dyn OperatorTrait<f64>,
+            &b as &dyn OperatorTrait<f64>,
+        ])
+        .unwrap();
+        let mut dense = CeedMatrix::<f64>::dense_col_major_symbolic(2, 2).unwrap();
+        let msg = c
+            .linear_assemble_add_ceed_matrix(&mut dense)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            msg.contains("CompositeOperatorBorrowed")
+                && msg.contains("linear_assemble_add_ceed_matrix"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn composite_borrowed_create_fdm_element_inverse_jacobi_errors() {
+        let a = ScaleOp { n: 2, scale: 1.0 };
+        let b = ScaleOp { n: 2, scale: 2.0 };
+        let c = CompositeOperatorBorrowed::new(vec![
+            &a as &dyn OperatorTrait<f64>,
+            &b as &dyn OperatorTrait<f64>,
+        ])
+        .unwrap();
+        let msg = match c.operator_create_fdm_element_inverse_jacobi() {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("expected Jacobi FDM inverse on borrowed composite to fail"),
+        };
+        assert!(
+            msg.contains("CompositeOperatorBorrowed")
+                && msg.contains("operator_create_fdm_element_inverse_jacobi"),
             "{msg}"
         );
     }

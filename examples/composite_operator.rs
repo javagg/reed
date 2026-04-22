@@ -5,7 +5,7 @@
 //! restrictions/bases, use **`composite_operator_refs`** (see `composite_operator_refs.rs` and
 //! `Reed::composite_operator_refs`).
 
-use reed::{OperatorTrait, Reed, ReedResult, VectorTrait};
+use reed::{OperatorAssembleKind, OperatorTrait, Reed, ReedResult, VectorTrait};
 
 struct ScaleOp {
     n: usize,
@@ -78,5 +78,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     composite.linear_assemble_diagonal(&mut *d)?;
     println!("diag composite = sum of diagonals => {:?}", d.as_slice());
     assert_eq!(d.as_slice(), &[5.0, 5.0, 5.0]);
+    println!(
+        "assemble probe: LinearNumeric={} LinearCsrNumeric={}",
+        composite.operator_supports_assemble(OperatorAssembleKind::LinearNumeric),
+        composite.operator_supports_assemble(OperatorAssembleKind::LinearCsrNumeric)
+    );
+    println!(
+        "for matrix-handle assembly fallback, keep sub-operators and assemble each separately (see composite_operator_refs.rs)"
+    );
     Ok(())
 }

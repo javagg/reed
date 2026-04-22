@@ -5,7 +5,27 @@
 //! composing operators under one `Ceed` context.
 //! Sub-operators must use single-buffer `OperatorTrait::apply` (not multi-active `apply_field_buffers`).
 
-use reed::{FieldVector, OperatorTrait, QuadMode, Reed, ReedResult};
+use reed::{
+    CeedMatrix, CeedMatrixStorage, FieldVector, OperatorAssembleKind, OperatorTrait, QuadMode,
+    Reed, ReedResult,
+};
+
+fn assemble_with_composite_fallback(
+    composite: &dyn OperatorTrait<f64>,
+    subops: &[&dyn OperatorTrait<f64>],
+    matrix: &mut CeedMatrix<f64>,
+) -> ReedResult<bool> {
+    match OperatorTrait::linear_assemble_ceed_matrix(composite, matrix) {
+        Ok(()) => Ok(false),
+        Err(_) => {
+            matrix.clear_numeric_values();
+            for op in subops {
+                OperatorTrait::linear_assemble_add_ceed_matrix(*op, matrix)?;
+            }
+            Ok(true)
+        }
+    }
+}
 
 fn main() -> ReedResult<()> {
     let reed = Reed::<f64>::init("/cpu/self")?;
@@ -63,5 +83,39 @@ fn main() -> ReedResult<()> {
     composite.apply(&*u, &mut *y)?;
 
     println!("composite of two MassApply on u=[1,1,1] => {:?}", y.as_slice());
+    let subops: [&dyn OperatorTrait<f64>; 2] = [&op_a, &op_b];
+
+    let mut dense = CeedMatrix::<f64>::dense_col_major_symbolic(ndofs, ndofs)?;
+    let dense_fallback_used = assemble_with_composite_fallback(&composite, &subops, &mut dense)?;
+    if dense_fallback_used {
+        println!(
+            "Composite dense handle assembly is unsupported by design; fallback to summing sub-operator handle assemblies."
+        );
+    }
+
+    if let CeedMatrixStorage::DenseColMajor { values, .. } = dense.storage() {
+        println!(
+            "dense(0,0) from fallback sub-operator sum = {}",
+            values[0]
+        );
+    }
+
+    let pat = r_u.assembled_csr_pattern()?;
+    let mut csr = CeedMatrix::<f64>::csr_symbolic(pat);
+    let csr_fallback_used = assemble_with_composite_fallback(&composite, &subops, &mut csr)?;
+    if csr_fallback_used {
+        println!(
+            "Composite CSR handle assembly is unsupported by design; fallback to summing sub-operator handle assemblies."
+        );
+    }
+    if let CeedMatrixStorage::Csr(m) = csr.storage() {
+        println!("csr(0) from fallback sub-operator sum = {}", m.values[0]);
+    }
+
+    println!(
+        "Composite supports probe: LinearNumeric={} LinearCsrNumeric={} (CSR is intentionally false on composite).",
+        composite.operator_supports_assemble(OperatorAssembleKind::LinearNumeric),
+        composite.operator_supports_assemble(OperatorAssembleKind::LinearCsrNumeric)
+    );
     Ok(())
 }

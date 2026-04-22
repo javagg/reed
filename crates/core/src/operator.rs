@@ -11,7 +11,10 @@
 //! [`linear_assemble_add`](OperatorTrait::linear_assemble_add),
 //! [`linear_assemble_csr_matrix`](OperatorTrait::linear_assemble_csr_matrix),
 //! [`linear_assemble_csr_matrix_add`](OperatorTrait::linear_assemble_csr_matrix_add),
+//! [`linear_assemble_ceed_matrix`](OperatorTrait::linear_assemble_ceed_matrix),
+//! [`linear_assemble_add_ceed_matrix`](OperatorTrait::linear_assemble_add_ceed_matrix),
 //! [`operator_create_fdm_element_inverse`](OperatorTrait::operator_create_fdm_element_inverse),
+//! [`operator_create_fdm_element_inverse_jacobi`](OperatorTrait::operator_create_fdm_element_inverse_jacobi),
 //! [`linear_assemble_add_diagonal`](OperatorTrait::linear_assemble_add_diagonal)
 //! (defaults return `Err`; dense **`linear_assemble*` / `linear_assemble_add`** / **CSR set & add** /
 //! **`linear_assemble_add_diagonal`** and **small-`n` dense inverse FDM hook** on
@@ -33,6 +36,7 @@
 use crate::{
     csr::{CsrMatrix, CsrPattern},
     error::{ReedError, ReedResult},
+    matrix::CeedMatrix,
     scalar::Scalar,
     vector::VectorTrait,
 };
@@ -277,12 +281,40 @@ pub trait OperatorTrait<T: Scalar>: Send + Sync {
         ))
     }
 
+    /// Assemble into a libCEED-shaped matrix handle (**set** semantics): numeric entries are written
+    /// into `matrix` according to its storage (`DenseColMajor` or `Csr`), replacing prior numeric values.
+    /// Default `Err`; implemented on **`reed_cpu::CpuOperator`**.
+    fn linear_assemble_ceed_matrix(&self, _matrix: &mut CeedMatrix<T>) -> ReedResult<()> {
+        Err(ReedError::Operator(
+            "OperatorTrait::linear_assemble_ceed_matrix is not implemented (libCEED-style matrix handle set assembly)"
+                .into(),
+        ))
+    }
+
+    /// Assemble into a libCEED-shaped matrix handle (**add** semantics): numeric entries are
+    /// accumulated into `matrix` (`+=`) without clearing. Default `Err`; implemented on
+    /// **`reed_cpu::CpuOperator`**.
+    fn linear_assemble_add_ceed_matrix(&self, _matrix: &mut CeedMatrix<T>) -> ReedResult<()> {
+        Err(ReedError::Operator(
+            "OperatorTrait::linear_assemble_add_ceed_matrix is not implemented (libCEED-style matrix handle add assembly)"
+                .into(),
+        ))
+    }
+
     /// libCEED `CeedOperatorCreateFDMElementInverse`. Default `Err`; implemented on
     /// **`reed_cpu::CpuOperator`** as a small-`n` dense inverse (see `reed_cpu::fdm_inverse` module).
     fn operator_create_fdm_element_inverse(&self) -> ReedResult<Box<dyn OperatorTrait<T>>> {
         Err(ReedError::Operator(
             "OperatorTrait::operator_create_fdm_element_inverse is not implemented (libCEED CeedOperatorCreateFDMElementInverse)"
                 .into(),
+        ))
+    }
+
+    /// Structured diagonal-only inverse path (Jacobi), useful as a lightweight fallback when a
+    /// full dense inverse is undesirable. Default `Err`; implemented on **`reed_cpu::CpuOperator`**.
+    fn operator_create_fdm_element_inverse_jacobi(&self) -> ReedResult<Box<dyn OperatorTrait<T>>> {
+        Err(ReedError::Operator(
+            "OperatorTrait::operator_create_fdm_element_inverse_jacobi is not implemented".into(),
         ))
     }
 }
@@ -437,9 +469,28 @@ pub trait OperatorTrait<T: Scalar> {
         ))
     }
 
+    fn linear_assemble_ceed_matrix(&self, _matrix: &mut CeedMatrix<T>) -> ReedResult<()> {
+        Err(ReedError::Operator(
+            "OperatorTrait::linear_assemble_ceed_matrix is not implemented (wasm32 stub)".into(),
+        ))
+    }
+
+    fn linear_assemble_add_ceed_matrix(&self, _matrix: &mut CeedMatrix<T>) -> ReedResult<()> {
+        Err(ReedError::Operator(
+            "OperatorTrait::linear_assemble_add_ceed_matrix is not implemented (wasm32 stub)".into(),
+        ))
+    }
+
     fn operator_create_fdm_element_inverse(&self) -> ReedResult<Box<dyn OperatorTrait<T>>> {
         Err(ReedError::Operator(
             "OperatorTrait::operator_create_fdm_element_inverse is not implemented (libCEED CeedOperatorCreateFDMElementInverse)"
+                .into(),
+        ))
+    }
+
+    fn operator_create_fdm_element_inverse_jacobi(&self) -> ReedResult<Box<dyn OperatorTrait<T>>> {
+        Err(ReedError::Operator(
+            "OperatorTrait::operator_create_fdm_element_inverse_jacobi is not implemented (wasm32 stub)"
                 .into(),
         ))
     }

@@ -1581,6 +1581,14 @@ impl<'a, T: Scalar> OperatorTrait<T> for CpuOperator<'a, T> {
         CpuOperator::linear_assemble_csr_matrix_add(self, matrix)
     }
 
+    fn linear_assemble_ceed_matrix(&self, matrix: &mut CeedMatrix<T>) -> ReedResult<()> {
+        CpuOperator::linear_assemble_ceed_matrix(self, matrix)
+    }
+
+    fn linear_assemble_add_ceed_matrix(&self, matrix: &mut CeedMatrix<T>) -> ReedResult<()> {
+        CpuOperator::linear_assemble_add_ceed_matrix(self, matrix)
+    }
+
     fn operator_create_fdm_element_inverse(&self) -> ReedResult<Box<dyn OperatorTrait<T>>> {
         self.check_ready()?;
         let n = self.active_global_dof_len()?;
@@ -1613,6 +1621,10 @@ impl<'a, T: Scalar> OperatorTrait<T> for CpuOperator<'a, T> {
         Ok(Box::new(crate::fdm_inverse::CpuFdmDenseInverseOperator::new(
             n, inv,
         )))
+    }
+
+    fn operator_create_fdm_element_inverse_jacobi(&self) -> ReedResult<Box<dyn OperatorTrait<T>>> {
+        CpuOperator::operator_create_fdm_element_inverse_jacobi(self)
     }
 
     fn operator_label(&self) -> Option<&str> {
