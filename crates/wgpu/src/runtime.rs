@@ -75,6 +75,17 @@ pub struct GpuRuntime {
     /// Gallery-style scalar `out[i] = in0[i] * in1[i]` at quadrature points (Mass apply, Poisson1D apply, …).
     qfunction_pointwise_mul_layout: wgpu::BindGroupLayout,
     qfunction_pointwise_mul_pipeline: wgpu::ComputePipeline,
+    /// [`reed_cpu::Vec2Dot`] / [`reed_cpu::Vec3Dot`]: dot product per quadrature point (same 4-slot layout).
+    qfunction_vec2_dot_pipeline: wgpu::ComputePipeline,
+    qfunction_vec3_dot_pipeline: wgpu::ComputePipeline,
+    /// [`reed_cpu::Mass1DBuild`] / [`reed_cpu::Mass2DBuild`] / [`reed_cpu::Mass3DBuild`]: quadrature `qdata` from `dx` + weights (same 4-slot layout).
+    qfunction_mass1d_build_pipeline: wgpu::ComputePipeline,
+    qfunction_mass2d_build_pipeline: wgpu::ComputePipeline,
+    qfunction_mass3d_build_pipeline: wgpu::ComputePipeline,
+    /// [`reed_cpu::Poisson1DBuild`] / [`reed_cpu::Poisson2DBuild`] / [`reed_cpu::Poisson3DBuild`] (same 4-slot layout).
+    qfunction_poisson1d_build_pipeline: wgpu::ComputePipeline,
+    qfunction_poisson2d_build_pipeline: wgpu::ComputePipeline,
+    qfunction_poisson3d_build_pipeline: wgpu::ComputePipeline,
     /// [`reed_cpu::Vector2MassApply`] / [`reed_cpu::Vector2Poisson1DApply`]: `v[2*i+c] = qdata[i] * u[2*i+c]` (same bind layout as pointwise mul).
     qfunction_vector2_mass_apply_pipeline: wgpu::ComputePipeline,
     /// [`reed_cpu::Vector3MassApply`] / [`reed_cpu::Vector3Poisson1DApply`]: `v[3*i+c] = qdata[i] * u[3*i+c]` (same bind layout).
@@ -87,10 +98,24 @@ pub struct GpuRuntime {
     qfunction_vector2_poisson2d_apply_pipeline: wgpu::ComputePipeline,
     /// [`reed_cpu::Vector3Poisson2DApply`]: same 2×2 `qdata` applied to three stacked 2-gradients per point.
     qfunction_vector3_poisson2d_apply_pipeline: wgpu::ComputePipeline,
+    /// Cotangent accumulate for [`reed_cpu::Poisson2DApply::apply_operator_transpose`].
+    qfunction_poisson2d_transpose_pipeline: wgpu::ComputePipeline,
+    /// Cotangent accumulate for [`reed_cpu::Poisson3DApply::apply_operator_transpose`].
+    qfunction_poisson3d_transpose_pipeline: wgpu::ComputePipeline,
+    qfunction_vector2_poisson2d_transpose_pipeline: wgpu::ComputePipeline,
+    qfunction_vector3_poisson2d_transpose_pipeline: wgpu::ComputePipeline,
+    /// [`reed_cpu::Vector3Poisson3DApply`]: shared 3×3 `qdata` on three stacked 3-gradients (`du`/`dv` length `9 * num_q`).
+    qfunction_vector3_poisson3d_apply_pipeline: wgpu::ComputePipeline,
+    qfunction_vector3_poisson3d_transpose_pipeline: wgpu::ComputePipeline,
     /// Uniform + input SSBO + output SSBO: [`Identity`](reed_cpu::Identity) copy and [`Scale`](reed_cpu::Scale) `f32` path.
     qfunction_unary_layout: wgpu::BindGroupLayout,
     qfunction_identity_copy_pipeline: wgpu::ComputePipeline,
+    qfunction_identity_transpose_accumulate_pipeline: wgpu::ComputePipeline,
+    /// [`reed_cpu::IdentityScalar`]: `out[i] = in[i * ncomp]` (same unary bind layout as identity copy).
+    qfunction_identity_scalar_gather_pipeline: wgpu::ComputePipeline,
+    qfunction_identity_scalar_transpose_accumulate_pipeline: wgpu::ComputePipeline,
     qfunction_scale_f32_pipeline: wgpu::ComputePipeline,
+    qfunction_scale_transpose_accumulate_pipeline: wgpu::ComputePipeline,
     mass_apply_qp_layout: wgpu::BindGroupLayout,
     mass_apply_qp_pipeline: wgpu::ComputePipeline,
     mass_apply_qp_transpose_pipeline: wgpu::ComputePipeline,
@@ -598,6 +623,70 @@ impl GpuRuntime {
             &shader_qf_pointwise,
             "qf_pointwise_mul_f32",
         );
+        let shader_qf_vec_dot = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("reed-qf-vec-dot-f32"),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(QFUNCTION_VEC_DOT_WGSL)),
+        });
+        let qfunction_vec2_dot_pipeline = create_pipeline_with_module(
+            &device,
+            &qfunction_pointwise_mul_layout,
+            &shader_qf_vec_dot,
+            "qf_vec2_dot_f32",
+        );
+        let qfunction_vec3_dot_pipeline = create_pipeline_with_module(
+            &device,
+            &qfunction_pointwise_mul_layout,
+            &shader_qf_vec_dot,
+            "qf_vec3_dot_f32",
+        );
+        let shader_qf_mass_build = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("reed-qf-mass-build-f32"),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(
+                QFUNCTION_MASS_BUILD_WGSL,
+            )),
+        });
+        let qfunction_mass1d_build_pipeline = create_pipeline_with_module(
+            &device,
+            &qfunction_pointwise_mul_layout,
+            &shader_qf_mass_build,
+            "qf_mass1d_build_f32",
+        );
+        let qfunction_mass2d_build_pipeline = create_pipeline_with_module(
+            &device,
+            &qfunction_pointwise_mul_layout,
+            &shader_qf_mass_build,
+            "qf_mass2d_build_f32",
+        );
+        let qfunction_mass3d_build_pipeline = create_pipeline_with_module(
+            &device,
+            &qfunction_pointwise_mul_layout,
+            &shader_qf_mass_build,
+            "qf_mass3d_build_f32",
+        );
+        let shader_qf_poisson_build = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("reed-qf-poisson-build-f32"),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(
+                QFUNCTION_POISSON_BUILD_WGSL,
+            )),
+        });
+        let qfunction_poisson1d_build_pipeline = create_pipeline_with_module(
+            &device,
+            &qfunction_pointwise_mul_layout,
+            &shader_qf_poisson_build,
+            "qf_poisson1d_build_f32",
+        );
+        let qfunction_poisson2d_build_pipeline = create_pipeline_with_module(
+            &device,
+            &qfunction_pointwise_mul_layout,
+            &shader_qf_poisson_build,
+            "qf_poisson2d_build_f32",
+        );
+        let qfunction_poisson3d_build_pipeline = create_pipeline_with_module(
+            &device,
+            &qfunction_pointwise_mul_layout,
+            &shader_qf_poisson_build,
+            "qf_poisson3d_build_f32",
+        );
         let shader_qf_vector2_mass = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("reed-qf-vector2-mass-apply-f32"),
             source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(
@@ -670,6 +759,42 @@ impl GpuRuntime {
             &shader_qf_v3p2,
             "vector3_poisson2d_apply_f32",
         );
+        let qfunction_poisson2d_transpose_pipeline = create_pipeline_with_module(
+            &device,
+            &qfunction_pointwise_mul_layout,
+            &shader_qf_poisson2d,
+            "poisson2d_transpose_accumulate_f32",
+        );
+        let qfunction_poisson3d_transpose_pipeline = create_pipeline_with_module(
+            &device,
+            &qfunction_pointwise_mul_layout,
+            &shader_qf_poisson3d,
+            "poisson3d_transpose_accumulate_f32",
+        );
+        let qfunction_vector2_poisson2d_transpose_pipeline = create_pipeline_with_module(
+            &device,
+            &qfunction_pointwise_mul_layout,
+            &shader_qf_v2p2,
+            "vector2_poisson2d_transpose_accumulate_f32",
+        );
+        let qfunction_vector3_poisson2d_transpose_pipeline = create_pipeline_with_module(
+            &device,
+            &qfunction_pointwise_mul_layout,
+            &shader_qf_v3p2,
+            "vector3_poisson2d_transpose_accumulate_f32",
+        );
+        let qfunction_vector3_poisson3d_apply_pipeline = create_pipeline_with_module(
+            &device,
+            &qfunction_pointwise_mul_layout,
+            &shader_qf_poisson3d,
+            "vector3_poisson3d_apply_f32",
+        );
+        let qfunction_vector3_poisson3d_transpose_pipeline = create_pipeline_with_module(
+            &device,
+            &qfunction_pointwise_mul_layout,
+            &shader_qf_poisson3d,
+            "vector3_poisson3d_transpose_accumulate_f32",
+        );
 
         let qfunction_unary_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("reed-qf-unary-f32"),
@@ -727,6 +852,36 @@ impl GpuRuntime {
             &qfunction_unary_layout,
             &shader_qf_scale,
             "qf_scale_f32",
+        );
+        let qfunction_identity_transpose_accumulate_pipeline = create_pipeline_with_module(
+            &device,
+            &qfunction_unary_layout,
+            &shader_qf_identity,
+            "qf_identity_transpose_accumulate_f32",
+        );
+        let shader_qf_identity_scalar = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("reed-qf-identity-scalar-f32"),
+            source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Borrowed(
+                QFUNCTION_IDENTITY_SCALAR_WGSL,
+            )),
+        });
+        let qfunction_identity_scalar_gather_pipeline = create_pipeline_with_module(
+            &device,
+            &qfunction_unary_layout,
+            &shader_qf_identity_scalar,
+            "qf_identity_scalar_gather_f32",
+        );
+        let qfunction_identity_scalar_transpose_accumulate_pipeline = create_pipeline_with_module(
+            &device,
+            &qfunction_unary_layout,
+            &shader_qf_identity_scalar,
+            "qf_identity_scalar_transpose_accumulate_f32",
+        );
+        let qfunction_scale_transpose_accumulate_pipeline = create_pipeline_with_module(
+            &device,
+            &qfunction_unary_layout,
+            &shader_qf_scale,
+            "qf_scale_transpose_accumulate_f32",
         );
 
         let mass_apply_qp_layout =
@@ -816,15 +971,33 @@ impl GpuRuntime {
             basis_weight_pipeline,
             qfunction_pointwise_mul_layout,
             qfunction_pointwise_mul_pipeline,
+            qfunction_vec2_dot_pipeline,
+            qfunction_vec3_dot_pipeline,
+            qfunction_mass1d_build_pipeline,
+            qfunction_mass2d_build_pipeline,
+            qfunction_mass3d_build_pipeline,
+            qfunction_poisson1d_build_pipeline,
+            qfunction_poisson2d_build_pipeline,
+            qfunction_poisson3d_build_pipeline,
             qfunction_vector2_mass_apply_pipeline,
             qfunction_vector3_mass_apply_pipeline,
             qfunction_poisson2d_apply_pipeline,
             qfunction_poisson3d_apply_pipeline,
             qfunction_vector2_poisson2d_apply_pipeline,
             qfunction_vector3_poisson2d_apply_pipeline,
+            qfunction_poisson2d_transpose_pipeline,
+            qfunction_poisson3d_transpose_pipeline,
+            qfunction_vector2_poisson2d_transpose_pipeline,
+            qfunction_vector3_poisson2d_transpose_pipeline,
+            qfunction_vector3_poisson3d_apply_pipeline,
+            qfunction_vector3_poisson3d_transpose_pipeline,
             qfunction_unary_layout,
             qfunction_identity_copy_pipeline,
+            qfunction_identity_transpose_accumulate_pipeline,
+            qfunction_identity_scalar_gather_pipeline,
+            qfunction_identity_scalar_transpose_accumulate_pipeline,
             qfunction_scale_f32_pipeline,
+            qfunction_scale_transpose_accumulate_pipeline,
             mass_apply_qp_layout,
             mass_apply_qp_pipeline,
             mass_apply_qp_transpose_pipeline,
@@ -935,6 +1108,38 @@ impl GpuRuntime {
         &self.qfunction_pointwise_mul_pipeline
     }
 
+    pub fn qfunction_vec2_dot_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.qfunction_vec2_dot_pipeline
+    }
+
+    pub fn qfunction_vec3_dot_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.qfunction_vec3_dot_pipeline
+    }
+
+    pub fn qfunction_mass1d_build_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.qfunction_mass1d_build_pipeline
+    }
+
+    pub fn qfunction_mass2d_build_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.qfunction_mass2d_build_pipeline
+    }
+
+    pub fn qfunction_mass3d_build_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.qfunction_mass3d_build_pipeline
+    }
+
+    pub fn qfunction_poisson1d_build_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.qfunction_poisson1d_build_pipeline
+    }
+
+    pub fn qfunction_poisson2d_build_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.qfunction_poisson2d_build_pipeline
+    }
+
+    pub fn qfunction_poisson3d_build_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.qfunction_poisson3d_build_pipeline
+    }
+
     pub fn qfunction_vector2_mass_apply_pipeline(&self) -> &wgpu::ComputePipeline {
         &self.qfunction_vector2_mass_apply_pipeline
     }
@@ -959,6 +1164,30 @@ impl GpuRuntime {
         &self.qfunction_vector3_poisson2d_apply_pipeline
     }
 
+    pub fn qfunction_poisson2d_transpose_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.qfunction_poisson2d_transpose_pipeline
+    }
+
+    pub fn qfunction_poisson3d_transpose_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.qfunction_poisson3d_transpose_pipeline
+    }
+
+    pub fn qfunction_vector2_poisson2d_transpose_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.qfunction_vector2_poisson2d_transpose_pipeline
+    }
+
+    pub fn qfunction_vector3_poisson2d_transpose_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.qfunction_vector3_poisson2d_transpose_pipeline
+    }
+
+    pub fn qfunction_vector3_poisson3d_apply_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.qfunction_vector3_poisson3d_apply_pipeline
+    }
+
+    pub fn qfunction_vector3_poisson3d_transpose_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.qfunction_vector3_poisson3d_transpose_pipeline
+    }
+
     pub fn qfunction_unary_layout(&self) -> &wgpu::BindGroupLayout {
         &self.qfunction_unary_layout
     }
@@ -969,6 +1198,22 @@ impl GpuRuntime {
 
     pub fn qfunction_scale_f32_pipeline(&self) -> &wgpu::ComputePipeline {
         &self.qfunction_scale_f32_pipeline
+    }
+
+    pub fn qfunction_identity_transpose_accumulate_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.qfunction_identity_transpose_accumulate_pipeline
+    }
+
+    pub fn qfunction_identity_scalar_gather_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.qfunction_identity_scalar_gather_pipeline
+    }
+
+    pub fn qfunction_identity_scalar_transpose_accumulate_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.qfunction_identity_scalar_transpose_accumulate_pipeline
+    }
+
+    pub fn qfunction_scale_transpose_accumulate_pipeline(&self) -> &wgpu::ComputePipeline {
+        &self.qfunction_scale_transpose_accumulate_pipeline
     }
 
     pub fn mass_apply_qp_layout(&self) -> &wgpu::BindGroupLayout {
@@ -1227,6 +1472,51 @@ impl GpuRuntime {
         self.queue.submit(Some(encoder.finish()));
         self.device.poll(wgpu::Maintain::Wait);
         map_readback_f32_result(&self.device, &readback, du)
+    }
+
+    /// Transpose for gallery kernels with **`components` scalar slots per quadrature point** sharing one
+    /// scalar `qdata[i]`: `du[i * components + c] += dv[i * components + c] * qdata[i]`
+    /// ([`reed_cpu::Vector2MassApply`], [`reed_cpu::Vector3MassApply`], and the Poisson1D vector applies
+    /// that reuse the same multiply pattern).
+    ///
+    /// Implemented by expanding `qdata` to length `num_qp * components` and calling
+    /// [`Self::mass_apply_qp_transpose_accumulate_f32_host`] (same WGSL kernel as scalar MassApply transpose).
+    pub fn mass_apply_qp_transpose_broadcast_scalar_qdata_f32_host(
+        &self,
+        dv: &[f32],
+        qdata: &[f32],
+        du: &mut [f32],
+        components: usize,
+    ) -> ReedResult<()> {
+        if components == 0 {
+            return Err(ReedError::QFunction(
+                "mass_apply_qp_transpose_broadcast_scalar_qdata_f32_host: components must be > 0"
+                    .into(),
+            ));
+        }
+        let num_qp = qdata.len();
+        let n = num_qp
+            .checked_mul(components)
+            .ok_or_else(|| ReedError::QFunction("broadcast transpose: length overflow".into()))?;
+        if dv.len() < n || du.len() < n {
+            return Err(ReedError::QFunction(format!(
+                "mass_apply_qp_transpose_broadcast_scalar_qdata_f32_host: need dv>={n}, du>={n} for num_qp={num_qp} components={components}; got dv={} du={}",
+                dv.len(),
+                du.len()
+            )));
+        }
+        if num_qp == 0 {
+            return Ok(());
+        }
+        let mut q_exp = vec![0.0_f32; n];
+        for i in 0..num_qp {
+            let s = qdata[i];
+            let base = i * components;
+            for c in 0..components {
+                q_exp[base + c] = s;
+            }
+        }
+        self.mass_apply_qp_transpose_accumulate_f32_host(&dv[..n], &q_exp, &mut du[..n])
     }
 
     /// When [`QFunctionContext::host_needs_device_upload`] is true, copies host context bytes into
@@ -1744,6 +2034,203 @@ fn qf_pointwise_mul_f32(@builtin(global_invocation_id) gid: vec3<u32>) {
 }
 "#;
 
+/// [`reed_cpu::Vec2Dot`] / [`reed_cpu::Vec3Dot`] on `f32`: `w[i] = dot(u[i], v[i])` with packed `u`/`v`.
+const QFUNCTION_VEC_DOT_WGSL: &str = r#"
+struct QfVecDotParams {
+    num_q: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+};
+
+@group(0) @binding(0) var<uniform> qp: QfVecDotParams;
+@group(0) @binding(1) var<storage, read> qu: array<f32>;
+@group(0) @binding(2) var<storage, read> qv: array<f32>;
+@group(0) @binding(3) var<storage, read_write> qw: array<f32>;
+
+@compute @workgroup_size(256)
+fn qf_vec2_dot_f32(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= qp.num_q) {
+        return;
+    }
+    let b = i * 2u;
+    qw[i] = qu[b] * qv[b] + qu[b + 1u] * qv[b + 1u];
+}
+
+@compute @workgroup_size(256)
+fn qf_vec3_dot_f32(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= qp.num_q) {
+        return;
+    }
+    let b = i * 3u;
+    qw[i] = qu[b] * qv[b] + qu[b + 1u] * qv[b + 1u] + qu[b + 2u] * qv[b + 2u];
+}
+"#;
+
+/// [`reed_cpu::Mass1DBuild`] / [`reed_cpu::Mass2DBuild`] / [`reed_cpu::Mass3DBuild`] on `f32`.
+const QFUNCTION_MASS_BUILD_WGSL: &str = r#"
+struct QfMassBuildParams {
+    num_q: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+};
+
+@group(0) @binding(0) var<uniform> qp: QfMassBuildParams;
+@group(0) @binding(1) var<storage, read> qdx: array<f32>;
+@group(0) @binding(2) var<storage, read> qw: array<f32>;
+@group(0) @binding(3) var<storage, read_write> qqdata: array<f32>;
+
+@compute @workgroup_size(256)
+fn qf_mass1d_build_f32(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= qp.num_q) {
+        return;
+    }
+    qqdata[i] = abs(qdx[i]) * qw[i];
+}
+
+@compute @workgroup_size(256)
+fn qf_mass2d_build_f32(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= qp.num_q) {
+        return;
+    }
+    let b = i * 4u;
+    let g00 = qdx[b];
+    let g01 = qdx[b + 1u];
+    let g10 = qdx[b + 2u];
+    let g11 = qdx[b + 3u];
+    let det_j = g00 * g11 - g01 * g10;
+    qqdata[i] = abs(det_j) * qw[i];
+}
+
+@compute @workgroup_size(256)
+fn qf_mass3d_build_f32(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= qp.num_q) {
+        return;
+    }
+    let b = i * 9u;
+    let j00 = qdx[b];
+    let j01 = qdx[b + 1u];
+    let j02 = qdx[b + 2u];
+    let j10 = qdx[b + 3u];
+    let j11 = qdx[b + 4u];
+    let j12 = qdx[b + 5u];
+    let j20 = qdx[b + 6u];
+    let j21 = qdx[b + 7u];
+    let j22 = qdx[b + 8u];
+    let det_j = j00 * (j11 * j22 - j12 * j21) - j01 * (j10 * j22 - j12 * j20) + j02 * (j10 * j21 - j11 * j20);
+    qqdata[i] = abs(det_j) * qw[i];
+}
+"#;
+
+/// [`reed_cpu::Poisson1DBuild`] / [`reed_cpu::Poisson2DBuild`] / [`reed_cpu::Poisson3DBuild`] on `f32`.
+/// Near-singular Jacobians are rejected on the **host** before dispatch (same threshold as CPU gallery).
+const QFUNCTION_POISSON_BUILD_WGSL: &str = r#"
+struct QfPoissonBuildParams {
+    num_q: u32,
+    _pad0: u32,
+    _pad1: u32,
+    _pad2: u32,
+};
+
+@group(0) @binding(0) var<uniform> qp: QfPoissonBuildParams;
+@group(0) @binding(1) var<storage, read> qdx: array<f32>;
+@group(0) @binding(2) var<storage, read> qw: array<f32>;
+@group(0) @binding(3) var<storage, read_write> qqdata: array<f32>;
+
+@compute @workgroup_size(256)
+fn qf_poisson1d_build_f32(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= qp.num_q) {
+        return;
+    }
+    qqdata[i] = qw[i] / qdx[i];
+}
+
+@compute @workgroup_size(256)
+fn qf_poisson2d_build_f32(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= qp.num_q) {
+        return;
+    }
+    let b = i * 4u;
+    let j00 = qdx[b];
+    let j01 = qdx[b + 1u];
+    let j10 = qdx[b + 2u];
+    let j11 = qdx[b + 3u];
+    let det_j = j00 * j11 - j01 * j10;
+    let inv00 = j11 / det_j;
+    let inv01 = -j01 / det_j;
+    let inv10 = -j10 / det_j;
+    let inv11 = j00 / det_j;
+    let scale = abs(det_j) * qw[i];
+    let g00 = scale * (inv00 * inv00 + inv01 * inv01);
+    let g01 = scale * (inv00 * inv10 + inv01 * inv11);
+    let g10 = scale * (inv10 * inv00 + inv11 * inv01);
+    let g11 = scale * (inv10 * inv10 + inv11 * inv11);
+    qqdata[b] = g00;
+    qqdata[b + 1u] = g01;
+    qqdata[b + 2u] = g10;
+    qqdata[b + 3u] = g11;
+}
+
+@compute @workgroup_size(256)
+fn qf_poisson3d_build_f32(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= qp.num_q) {
+        return;
+    }
+    let b = i * 9u;
+    let j00 = qdx[b];
+    let j01 = qdx[b + 1u];
+    let j02 = qdx[b + 2u];
+    let j10 = qdx[b + 3u];
+    let j11 = qdx[b + 4u];
+    let j12 = qdx[b + 5u];
+    let j20 = qdx[b + 6u];
+    let j21 = qdx[b + 7u];
+    let j22 = qdx[b + 8u];
+
+    let c00 = j11 * j22 - j12 * j21;
+    let c01 = -(j10 * j22 - j12 * j20);
+    let c02 = j10 * j21 - j11 * j20;
+    let c10 = -(j01 * j22 - j02 * j21);
+    let c11 = j00 * j22 - j02 * j20;
+    let c12 = -(j00 * j21 - j01 * j20);
+    let c20 = j01 * j12 - j02 * j11;
+    let c21 = -(j00 * j12 - j02 * j10);
+    let c22 = j00 * j11 - j01 * j10;
+
+    let det_j = j00 * c00 + j01 * c01 + j02 * c02;
+
+    let inv00 = c00 / det_j;
+    let inv01 = c10 / det_j;
+    let inv02 = c20 / det_j;
+    let inv10 = c01 / det_j;
+    let inv11 = c11 / det_j;
+    let inv12 = c21 / det_j;
+    let inv20 = c02 / det_j;
+    let inv21 = c12 / det_j;
+    let inv22 = c22 / det_j;
+
+    let s = abs(det_j) * qw[i];
+    qqdata[b] = s * (inv00 * inv00 + inv01 * inv01 + inv02 * inv02);
+    qqdata[b + 1u] = s * (inv00 * inv10 + inv01 * inv11 + inv02 * inv12);
+    qqdata[b + 2u] = s * (inv00 * inv20 + inv01 * inv21 + inv02 * inv22);
+    qqdata[b + 3u] = s * (inv10 * inv00 + inv11 * inv01 + inv12 * inv02);
+    qqdata[b + 4u] = s * (inv10 * inv10 + inv11 * inv11 + inv12 * inv12);
+    qqdata[b + 5u] = s * (inv10 * inv20 + inv11 * inv21 + inv12 * inv22);
+    qqdata[b + 6u] = s * (inv20 * inv00 + inv21 * inv01 + inv22 * inv02);
+    qqdata[b + 7u] = s * (inv20 * inv10 + inv21 * inv11 + inv22 * inv12);
+    qqdata[b + 8u] = s * (inv20 * inv20 + inv21 * inv21 + inv22 * inv22);
+}
+"#;
+
 /// [`reed_cpu::Vector2MassApply`] on `f32`: two components per quadrature point, one scalar `qdata` per point.
 const QFUNCTION_VECTOR2_MASS_APPLY_WGSL: &str = r#"
 struct QfVec2MassParams {
@@ -1826,6 +2313,25 @@ fn poisson2d_apply_f32(@builtin(global_invocation_id) gid: vec3<u32>) {
     qdv[i * 2u] = g00 * du0 + g01 * du1;
     qdv[i * 2u + 1u] = g10 * du0 + g11 * du1;
 }
+
+// qdu = ddv (read), qdv = ddu (read_write accumulate); matches CPU Poisson2DApply transpose.
+@compute @workgroup_size(256)
+fn poisson2d_transpose_accumulate_f32(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= qp.num_q) {
+        return;
+    }
+    let ddv0 = qdu[i * 2u];
+    let ddv1 = qdu[i * 2u + 1u];
+    let b = i * 4u;
+    let g00 = qqdata[b + 0u];
+    let g01 = qqdata[b + 1u];
+    let g10 = qqdata[b + 2u];
+    let g11 = qqdata[b + 3u];
+    let o0 = i * 2u;
+    qdv[o0] = qdv[o0] + g00 * ddv0 + g10 * ddv1;
+    qdv[o0 + 1u] = qdv[o0 + 1u] + g01 * ddv0 + g11 * ddv1;
+}
 "#;
 
 /// [`reed_cpu::Poisson3DApply`] on `f32`: row-major 3×3 `qdata[9*i+..]` times `du[3*i+..]` into `dv[3*i+..]`.
@@ -1865,6 +2371,85 @@ fn poisson3d_apply_f32(@builtin(global_invocation_id) gid: vec3<u32>) {
     qdv[i * 3u + 1u] = g10 * du0 + g11 * du1 + g12 * du2;
     qdv[i * 3u + 2u] = g20 * du0 + g21 * du1 + g22 * du2;
 }
+
+@compute @workgroup_size(256)
+fn poisson3d_transpose_accumulate_f32(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= qp.num_q) {
+        return;
+    }
+    let ddv0 = qdu[i * 3u];
+    let ddv1 = qdu[i * 3u + 1u];
+    let ddv2 = qdu[i * 3u + 2u];
+    let b = i * 9u;
+    let g00 = qqdata[b + 0u];
+    let g01 = qqdata[b + 1u];
+    let g02 = qqdata[b + 2u];
+    let g10 = qqdata[b + 3u];
+    let g11 = qqdata[b + 4u];
+    let g12 = qqdata[b + 5u];
+    let g20 = qqdata[b + 6u];
+    let g21 = qqdata[b + 7u];
+    let g22 = qqdata[b + 8u];
+    let o0 = i * 3u;
+    qdv[o0] = qdv[o0] + g00 * ddv0 + g10 * ddv1 + g20 * ddv2;
+    qdv[o0 + 1u] = qdv[o0 + 1u] + g01 * ddv0 + g11 * ddv1 + g21 * ddv2;
+    qdv[o0 + 2u] = qdv[o0 + 2u] + g02 * ddv0 + g12 * ddv1 + g22 * ddv2;
+}
+
+@compute @workgroup_size(256)
+fn vector3_poisson3d_apply_f32(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= qp.num_q) {
+        return;
+    }
+    let b = i * 9u;
+    let g00 = qqdata[b + 0u];
+    let g01 = qqdata[b + 1u];
+    let g02 = qqdata[b + 2u];
+    let g10 = qqdata[b + 3u];
+    let g11 = qqdata[b + 4u];
+    let g12 = qqdata[b + 5u];
+    let g20 = qqdata[b + 6u];
+    let g21 = qqdata[b + 7u];
+    let g22 = qqdata[b + 8u];
+    for (var c = 0u; c < 3u; c = c + 1u) {
+        let base = c * 3u;
+        let du0 = qdu[b + base];
+        let du1 = qdu[b + base + 1u];
+        let du2 = qdu[b + base + 2u];
+        qdv[b + base] = g00 * du0 + g01 * du1 + g02 * du2;
+        qdv[b + base + 1u] = g10 * du0 + g11 * du1 + g12 * du2;
+        qdv[b + base + 2u] = g20 * du0 + g21 * du1 + g22 * du2;
+    }
+}
+
+@compute @workgroup_size(256)
+fn vector3_poisson3d_transpose_accumulate_f32(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= qp.num_q) {
+        return;
+    }
+    let b = i * 9u;
+    let g00 = qqdata[b + 0u];
+    let g01 = qqdata[b + 1u];
+    let g02 = qqdata[b + 2u];
+    let g10 = qqdata[b + 3u];
+    let g11 = qqdata[b + 4u];
+    let g12 = qqdata[b + 5u];
+    let g20 = qqdata[b + 6u];
+    let g21 = qqdata[b + 7u];
+    let g22 = qqdata[b + 8u];
+    for (var c = 0u; c < 3u; c = c + 1u) {
+        let base = c * 3u;
+        let ddv0 = qdu[b + base];
+        let ddv1 = qdu[b + base + 1u];
+        let ddv2 = qdu[b + base + 2u];
+        qdv[b + base] = qdv[b + base] + g00 * ddv0 + g10 * ddv1 + g20 * ddv2;
+        qdv[b + base + 1u] = qdv[b + base + 1u] + g01 * ddv0 + g11 * ddv1 + g21 * ddv2;
+        qdv[b + base + 2u] = qdv[b + base + 2u] + g02 * ddv0 + g12 * ddv1 + g22 * ddv2;
+    }
+}
 "#;
 
 /// [`reed_cpu::Vector2Poisson2DApply`] on `f32`: shared 2×2 `qdata[i*4..]` times each of two 2-gradients packed in `du[i*4..]`.
@@ -1900,6 +2485,26 @@ fn vector2_poisson2d_apply_f32(@builtin(global_invocation_id) gid: vec3<u32>) {
     qdv[qb + 1u] = g10 * du0a + g11 * du1a;
     qdv[qb + 2u] = g00 * du0b + g01 * du1b;
     qdv[qb + 3u] = g10 * du0b + g11 * du1b;
+}
+
+@compute @workgroup_size(256)
+fn vector2_poisson2d_transpose_accumulate_f32(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= qp.num_q) {
+        return;
+    }
+    let qb = i * 4u;
+    let g00 = qqdata[qb + 0u];
+    let g01 = qqdata[qb + 1u];
+    let g10 = qqdata[qb + 2u];
+    let g11 = qqdata[qb + 3u];
+    for (var c = 0u; c < 2u; c = c + 1u) {
+        let base = c * 2u;
+        let ddv0 = qdu[qb + base];
+        let ddv1 = qdu[qb + base + 1u];
+        qdv[qb + base] = qdv[qb + base] + g00 * ddv0 + g10 * ddv1;
+        qdv[qb + base + 1u] = qdv[qb + base + 1u] + g01 * ddv0 + g11 * ddv1;
+    }
 }
 "#;
 
@@ -1937,6 +2542,27 @@ fn vector3_poisson2d_apply_f32(@builtin(global_invocation_id) gid: vec3<u32>) {
         qdv[b6 + base + 1u] = g10 * du0 + g11 * du1;
     }
 }
+
+@compute @workgroup_size(256)
+fn vector3_poisson2d_transpose_accumulate_f32(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= qp.num_q) {
+        return;
+    }
+    let qb = i * 4u;
+    let g00 = qqdata[qb + 0u];
+    let g01 = qqdata[qb + 1u];
+    let g10 = qqdata[qb + 2u];
+    let g11 = qqdata[qb + 3u];
+    let b6 = i * 6u;
+    for (var c = 0u; c < 3u; c = c + 1u) {
+        let base = c * 2u;
+        let ddv0 = qdu[b6 + base];
+        let ddv1 = qdu[b6 + base + 1u];
+        qdv[b6 + base] = qdv[b6 + base] + g00 * ddv0 + g10 * ddv1;
+        qdv[b6 + base + 1u] = qdv[b6 + base + 1u] + g01 * ddv0 + g11 * ddv1;
+    }
+}
 "#;
 
 /// [`reed_cpu::Identity`] on `f32`: `out[i] = in[i]` for `i in 0..n` (flat `q * num_comp` words).
@@ -1960,6 +2586,48 @@ fn qf_identity_copy_f32(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     qout[i] = qin[i];
 }
+
+@compute @workgroup_size(256)
+fn qf_identity_transpose_accumulate_f32(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= qp.n) {
+        return;
+    }
+    qout[i] = qout[i] + qin[i];
+}
+"#;
+
+/// [`reed_cpu::IdentityScalar`] on `f32`: forward `out[i] = in[i * ncomp]`; transpose `du[i * ncomp] += dv[i]`.
+const QFUNCTION_IDENTITY_SCALAR_WGSL: &str = r#"
+struct QfIdentityScalarParams {
+    num_q: u32,
+    ncomp: u32,
+    _p0: u32,
+    _p1: u32,
+};
+
+@group(0) @binding(0) var<uniform> qp: QfIdentityScalarParams;
+@group(0) @binding(1) var<storage, read> qin: array<f32>;
+@group(0) @binding(2) var<storage, read_write> qout: array<f32>;
+
+@compute @workgroup_size(256)
+fn qf_identity_scalar_gather_f32(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= qp.num_q) {
+        return;
+    }
+    qout[i] = qin[i * qp.ncomp];
+}
+
+@compute @workgroup_size(256)
+fn qf_identity_scalar_transpose_accumulate_f32(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= qp.num_q) {
+        return;
+    }
+    let base = i * qp.ncomp;
+    qout[base] = qout[base] + qin[i];
+}
 "#;
 
 /// [`reed_cpu::Scale`] on `f32`: `out[i] = alpha * in[i]`; `alpha` from uniform (host reads libCEED 8-byte `f64` context).
@@ -1982,6 +2650,15 @@ fn qf_scale_f32(@builtin(global_invocation_id) gid: vec3<u32>) {
         return;
     }
     qout[i] = qp.alpha * qin[i];
+}
+
+@compute @workgroup_size(256)
+fn qf_scale_transpose_accumulate_f32(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i = gid.x;
+    if (i >= qp.n) {
+        return;
+    }
+    qout[i] = qout[i] + qp.alpha * qin[i];
 }
 "#;
 
@@ -2414,6 +3091,56 @@ mod mass_apply_qp_tests {
         for i in 0..n {
             let exp = du_before[i] + dv[i] * qd[i];
             assert!((du[i] - exp).abs() < 2.0e-3, "i={i}");
+        }
+    }
+
+    #[test]
+    fn mass_apply_qp_transpose_broadcast_matches_cpu_vector2_mass() {
+        let Some(rt) = gpu_runtime_or_skip() else {
+            return;
+        };
+        use reed_core::QFunctionTrait;
+
+        let num_qp = 41usize;
+        let components = 2usize;
+        let dv: Vec<f32> = (0..num_qp * components)
+            .map(|i| (i as f32) * 0.04 - 0.3)
+            .collect();
+        let qdata: Vec<f32> = (0..num_qp)
+            .map(|i| 0.65 + (i as f32) * 0.015)
+            .collect();
+        let du_seed: Vec<f32> = (0..num_qp * components)
+            .map(|i| (i as f32) * 0.09)
+            .collect();
+
+        let mut du_gpu = du_seed.clone();
+        rt.mass_apply_qp_transpose_broadcast_scalar_qdata_f32_host(
+            &dv,
+            &qdata,
+            &mut du_gpu,
+            components,
+        )
+        .unwrap();
+
+        let mut du_cpu = du_seed.clone();
+        let mut q_mut = qdata.clone();
+        let gallery = reed_cpu::Vector2MassApply::new();
+        gallery
+            .apply_operator_transpose(
+                &[],
+                num_qp,
+                &[&dv],
+                &mut [&mut du_cpu[..], &mut q_mut[..]],
+            )
+            .unwrap();
+
+        for i in 0..du_gpu.len() {
+            assert!(
+                (du_gpu[i] - du_cpu[i]).abs() < 2.0e-3,
+                "i={i} gpu={} cpu={}",
+                du_gpu[i],
+                du_cpu[i]
+            );
         }
     }
 }

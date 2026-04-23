@@ -3,6 +3,7 @@ use crate::{
     elem_restriction::ElemRestrictionTrait,
     enums::*,
     error::{ReedError, ReedResult},
+    qfunction::QFunctionTrait,
     scalar::Scalar,
     types::CeedInt,
     vector::VectorTrait,
@@ -89,6 +90,16 @@ pub trait Backend<T: Scalar>: Send + Sync {
         ncomp: usize,
         q: usize,
     ) -> ReedResult<Box<dyn BasisTrait<T>>>;
+
+    /// Optional device-side gallery QFunction (e.g. WGSL on wgpu for `f32`).
+    ///
+    /// When this returns `None`, callers should fall back to the host CPU gallery lookup.
+    fn try_device_q_function_by_name(
+        &self,
+        _name: &str,
+    ) -> Option<ReedResult<Box<dyn QFunctionTrait<T>>>> {
+        None
+    }
 }
 
 /// On WASM, wgpu::Device is not Send+Sync so neither is the Backend trait.
@@ -133,6 +144,13 @@ pub trait Backend<T: Scalar> {
         ncomp: usize,
         q: usize,
     ) -> ReedResult<Box<dyn BasisTrait<T>>>;
+
+    fn try_device_q_function_by_name(
+        &self,
+        _name: &str,
+    ) -> Option<ReedResult<Box<dyn QFunctionTrait<T>>>> {
+        None
+    }
 }
 
 /// Top-level Reed library context.

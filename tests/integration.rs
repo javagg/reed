@@ -1,7 +1,7 @@
 use reed::{
     CeedMatrix, CeedMatrixStorage, CompositeOperator, CpuOperator, CsrMatrix, ElemRestrictionTrait,
     ElemTopology, EvalMode, FieldVector, OperatorAssembleKind, OperatorTrait,
-    OperatorTransposeRequest, QFunctionCategory, QFunctionContext, QFunctionField, QFunctionTrait,
+    OperatorTransposeRequest, QFunctionCategory, QFunctionContext, QFunctionField,
     QuadMode, QFUNCTION_INTERIOR_GALLERY_NAMES, QFUNCTION_LIBCEED_MAIN_GALLERY_NAMES, Reed,
     ReedError, ReedResult, TransposeMode, VectorTrait,
 };
@@ -1949,7 +1949,8 @@ fn test_wgpu_hybrid_mass_operator_transpose_matches_cpu() {
 }
 
 // `GpuRuntime::mass_apply_qp_f32_host` / `mass_apply_qp_transpose_accumulate_f32_host`:
-// host slice upload + MassApply qp shaders + readback (no CpuOperator wiring yet).
+// host slice upload + MassApply qp shaders + readback (direct runtime API; operators use the same
+// kernels via `Reed::q_function_by_name` on `/gpu/wgpu` for `f32`).
 #[cfg(feature = "wgpu-backend")]
 #[test]
 fn test_wgpu_gpu_runtime_mass_apply_qp_host_bridge() {
@@ -2080,19 +2081,12 @@ fn test_wgpu_operator_mass1d_build_and_apply_matches_cpu() {
     assert!((sum_gpu - 2.0).abs() < 1.0e-3, "sum_gpu={sum_gpu}");
 }
 
-/// Mass operator apply step uses device WGSL [`reed_wgpu::MassApplyF32Wgpu`] (host q-vectors +
-/// GPU pointwise multiply + readback); build and restriction/basis paths unchanged.
+/// Mass operator apply step on `/gpu/wgpu` resolves `MassApply` to the WGSL gallery kernel via
+/// [`Reed::q_function_by_name`]; build and restriction/basis paths unchanged vs CPU.
 #[cfg(feature = "wgpu-backend")]
 #[test]
 fn test_wgpu_operator_mass1d_gpu_mass_qfunction_matches_cpu() {
-    let rt = reed_wgpu::WgpuBackend::<f32>::new()
-        .gpu_runtime()
-        .expect("wgpu runtime");
-    let qf_gpu = Box::new(
-        reed_wgpu::MassApplyF32Wgpu::new(rt).expect("MassApplyF32Wgpu::new"),
-    );
-
-    let run = |reed: &Reed<f32>, qf: Box<dyn QFunctionTrait<f32>>| -> Vec<f32> {
+    let run = |reed: &Reed<f32>| -> Vec<f32> {
         let nelem = 2usize;
         let p = 2usize;
         let q = 2usize;
@@ -2135,7 +2129,7 @@ fn test_wgpu_operator_mass1d_gpu_mass_qfunction_matches_cpu() {
 
         let op_mass = reed
             .operator_builder()
-            .qfunction(qf)
+            .qfunction(reed.q_function_by_name("MassApply").unwrap())
             .field("u", Some(&*r_u), Some(&*b_u), FieldVector::Active)
             .field("qdata", Some(&*r_q), None, FieldVector::Passive(&*qdata))
             .field("v", Some(&*r_u), Some(&*b_u), FieldVector::Active)
@@ -2154,8 +2148,8 @@ fn test_wgpu_operator_mass1d_gpu_mass_qfunction_matches_cpu() {
 
     let reed_cpu = Reed::<f32>::init("/cpu/self").unwrap();
     let reed_gpu = Reed::<f32>::init("/gpu/wgpu").unwrap();
-    let v_cpu = run(&reed_cpu, reed_cpu.q_function_by_name("MassApply").unwrap());
-    let v_gpu = run(&reed_gpu, qf_gpu);
+    let v_cpu = run(&reed_cpu);
+    let v_gpu = run(&reed_gpu);
     for (a, b) in v_cpu.iter().zip(v_gpu.iter()) {
         assert!((a - b).abs() < 5.0e-4, "cpu={a} gpu={b}");
     }

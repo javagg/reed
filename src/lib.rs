@@ -367,9 +367,18 @@ impl<T: Scalar> Reed<T> {
         )))
     }
 
-    /// CPU gallery QFunction by libCEED-compatible name (see `reed_cpu::gallery` and `design_mapping.md`).
+    /// Gallery QFunction by libCEED-compatible name (see `reed_cpu::gallery` and `design_mapping.md`).
+    ///
+    /// On `/gpu/wgpu` with scalar type `f32`, supported names are resolved to WGSL device kernels
+    /// when a GPU adapter is available; other names and scalar types use the host CPU gallery.
     pub fn q_function_by_name(&self, name: &str) -> ReedResult<Box<dyn QFunctionTrait<T>>> {
-        let _ = self;
+        let dev = {
+            let g = self.inner.backend().lock().unwrap();
+            (**g).try_device_q_function_by_name(name)
+        };
+        if let Some(res) = dev {
+            return res;
+        }
         q_function_by_name(name)
     }
 }

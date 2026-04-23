@@ -6,20 +6,32 @@ mod runtime;
 mod vector;
 
 pub use qfunction_device::{
-    IdentityF32Wgpu, MassApplyF32Wgpu, Poisson1DApplyF32Wgpu, Poisson2DApplyF32Wgpu,
-    Poisson3DApplyF32Wgpu, QFunctionPrototypeScaleF32, ScaleF32Wgpu, Vector2MassApplyF32Wgpu,
+    IdentityF32Wgpu, IdentityScalarF32Wgpu, Mass1DBuildF32Wgpu, Mass2DBuildF32Wgpu,
+    Mass3DBuildF32Wgpu, MassApplyF32Wgpu, MassApplyInterpTimesWeightF32Wgpu, Poisson1DApplyF32Wgpu,
+    Poisson1DBuildF32Wgpu, Poisson2DApplyF32Wgpu, Poisson2DBuildF32Wgpu, Poisson3DApplyF32Wgpu,
+    Poisson3DBuildF32Wgpu, QFunctionPrototypeScaleF32, ScaleF32Wgpu, Vec2DotF32Wgpu,
+    Vec3DotF32Wgpu, Vector2MassApplyF32Wgpu,
     Vector2Poisson1DApplyF32Wgpu, Vector2Poisson2DApplyF32Wgpu, Vector3MassApplyF32Wgpu,
-    Vector3Poisson1DApplyF32Wgpu, Vector3Poisson2DApplyF32Wgpu,
+    Vector3Poisson1DApplyF32Wgpu, Vector3Poisson2DApplyF32Wgpu, Vector3Poisson3DApplyF32Wgpu,
 };
 pub use runtime::GpuRuntime;
 use reed_core::{
     enums::*,
     error::{ReedError, ReedResult},
+    qfunction::QFunctionTrait,
     scalar::Scalar,
     types::CeedInt,
     BasisTrait, ElemRestrictionTrait, VectorTrait,
 };
 use std::sync::Arc;
+
+/// # Safety
+/// Caller must ensure `T` is `f32` (`TypeId::of::<T>() == TypeId::of::<f32>()`).
+unsafe fn coerce_qfunction_f32_box<T: Scalar>(
+    q: Box<dyn QFunctionTrait<f32>>,
+) -> Box<dyn QFunctionTrait<T>> {
+    std::mem::transmute(q)
+}
 
 /// Backend factory trait (implemented by each backend).
 #[cfg(not(target_arch = "wasm32"))]
@@ -212,6 +224,23 @@ impl<T: Scalar> WgpuBackend<T> {
     pub fn gpu_runtime(&self) -> Option<Arc<GpuRuntime>> {
         self.runtime.clone()
     }
+
+    pub(crate) fn try_device_q_function_dispatch(
+        &self,
+        name: &str,
+    ) -> Option<ReedResult<Box<dyn reed_core::QFunctionTrait<T>>>> {
+        use std::any::TypeId;
+        if TypeId::of::<T>() != TypeId::of::<f32>() {
+            return None;
+        }
+        let rt = self.gpu_runtime()?;
+        crate::qfunction_device::try_create_device_q_function_f32(name, rt).map(|r| {
+            r.map(|q| unsafe {
+                debug_assert_eq!(TypeId::of::<T>(), TypeId::of::<f32>());
+                coerce_qfunction_f32_box(q)
+            })
+        })
+    }
 }
 
 // Also implement reed_core::Backend so it satisfies reed::Backend (= reed_core::Backend).
@@ -273,6 +302,13 @@ impl<T: Scalar> reed_core::Backend<T> for WgpuBackend<T> {
         q: usize,
     ) -> reed_core::ReedResult<Box<dyn reed_core::BasisTrait<T>>> {
         Backend::<T>::create_basis_h1_simplex(self, topo, poly, ncomp, q)
+    }
+
+    fn try_device_q_function_by_name(
+        &self,
+        name: &str,
+    ) -> Option<reed_core::ReedResult<Box<dyn reed_core::QFunctionTrait<T>>>> {
+        self.try_device_q_function_dispatch(name)
     }
 }
 
@@ -452,6 +488,13 @@ impl<T: Scalar> reed_core::Backend<T> for WgpuBackend<T> {
         q: usize,
     ) -> ReedResult<Box<dyn BasisTrait<T>>> {
         reed_core::Backend::create_basis_h1_simplex(&self.cpu_backend, topo, poly, ncomp, q)
+    }
+
+    fn try_device_q_function_by_name(
+        &self,
+        name: &str,
+    ) -> Option<ReedResult<Box<dyn reed_core::QFunctionTrait<T>>>> {
+        self.try_device_q_function_dispatch(name)
     }
 }
 
